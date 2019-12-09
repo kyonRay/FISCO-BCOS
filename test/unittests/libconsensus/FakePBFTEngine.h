@@ -201,6 +201,13 @@ public:
 
     void setLeaderFailed(bool leaderFailed) { m_leaderFailed = leaderFailed; }
     inline std::pair<bool, IDXTYPE> getLeader() const { return PBFTEngine::getLeader(); }
+    inline dev::h512 getLeaderNodeID()
+    {
+        dev::network::NodeID leaderID;
+        PBFTEngine::getNodeIDByIndex(leaderID, PBFTEngine::getLeader().second);
+        return leaderID;
+    }
+    inline bool isLeader() { return nodeIdx() == getLeader().second; }
 
     void handleMsg(PBFTMsgPacket const& pbftMsg) { return PBFTEngine::handleMsg(pbftMsg); }
     void notifySealing(dev::eth::Block const& block) { return PBFTEngine::notifySealing(block); }

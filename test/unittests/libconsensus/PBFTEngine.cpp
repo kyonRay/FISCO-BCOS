@@ -415,10 +415,14 @@ BOOST_AUTO_TEST_CASE(testHandlePrepareReq)
     fake_pbft.consensus()->handlePrepareMsg(req);
     BOOST_CHECK(fake_pbft.consensus()->reqCache()->prepareCache().block_hash == req.block_hash);
     /// check broadcastSign
-    for (size_t i = 0; i < fake_pbft.m_sealerList.size(); i++)
-    {
-        compareAsyncSendTime(fake_pbft, fake_pbft.m_sealerList[i], 1);
-    }
+    // for (size_t i = 0; i < fake_pbft.m_sealerList.size(); i++)
+    // {
+    //     compareAsyncSendTime(fake_pbft, fake_pbft.m_sealerList[i], 1);
+    // }
+    // 改成只和leader比较
+    compareAsyncSendTime(fake_pbft,fake_pbft.consensus()->getLeaderNodeID(), 1);
+        
+
     /// check checkAndCommit(without enough sign and commit requests)
     BOOST_CHECK(fake_pbft.consensus()->reqCache()->rawPrepareCache() !=
                 fake_pbft.consensus()->reqCache()->committedPrepareCache());
@@ -432,13 +436,18 @@ BOOST_AUTO_TEST_CASE(testHandlePrepareReq)
     fake_pbft.consensus()->handlePrepareMsg(req);
 
     /// BOOST_CHECK(fake_pbft.consensus()->reqCache()->prepareCache().block_hash == h256());
+    if(fake_pbft.consensus()->isLeader()){
     BOOST_CHECK(fake_pbft.consensus()->reqCache()->rawPrepareCache() ==
                 fake_pbft.consensus()->reqCache()->committedPrepareCache());
+    }
     bytes data;
     fake_pbft.consensus()->reqCache()->committedPrepareCache().encode(data);
-    checkBackupMsg(fake_pbft, FakePBFTEngine::backupKeyCommitted(), data);
+    if(fake_pbft.consensus()->isLeader()){
+        checkBackupMsg(fake_pbft, FakePBFTEngine::backupKeyCommitted(), data);
+    }
     /// submit failed for collected commitReq is not enough
-    CheckBlockChain(fake_pbft, block_number + 1);
+    // 在新设计的PBFT中，checkAndCommit阶段不能达成提交区块
+    CheckBlockChain(fake_pbft, block_number);
 }
 
 BOOST_AUTO_TEST_CASE(testIsValidSignReq)
@@ -471,7 +480,8 @@ BOOST_AUTO_TEST_CASE(testHandleSignMsg)
     fake_pbft.consensus()->handleSignMsg(signReq2, pbftMsg);
     BOOST_CHECK(signReq2 == signReq);
     /// check the signReq has been added to the cache
-    BOOST_CHECK(fake_pbft.consensus()->reqCache()->isExistSign(signReq2));
+    if(fake_pbft.consensus()->isLeader())
+        BOOST_CHECK(fake_pbft.consensus()->reqCache()->isExistSign(signReq2));
     CheckBlockChain(fake_pbft, block_number);
 
     /// case2： with enough SignReq
@@ -485,9 +495,12 @@ BOOST_AUTO_TEST_CASE(testHandleSignMsg)
     BOOST_CHECK(fake_pbft.consensus()->reqCache()->committedPrepareCache() ==
                 fake_pbft.consensus()->reqCache()->rawPrepareCache());
     /// check backupMsg
+    // TODO: backupMsg理论上应该是所有节点都做的，需要继续改
     bytes data;
-    fake_pbft.consensus()->reqCache()->committedPrepareCache().encode(data);
-    checkBackupMsg(fake_pbft, FakePBFTEngine::backupKeyCommitted(), data);
+    if(fake_pbft.consensus()->isLeader()){
+        fake_pbft.consensus()->reqCache()->committedPrepareCache().encode(data);
+        checkBackupMsg(fake_pbft, FakePBFTEngine::backupKeyCommitted(), data);
+    }
     CheckBlockChain(fake_pbft, block_number);
 
     /// case3: with enough SignReq and CommitReq
@@ -500,9 +513,12 @@ BOOST_AUTO_TEST_CASE(testHandleSignMsg)
     BOOST_CHECK(fake_pbft.consensus()->reqCache()->committedPrepareCache() ==
                 fake_pbft.consensus()->reqCache()->rawPrepareCache());
     /// check backupMsg
-    fake_pbft.consensus()->reqCache()->committedPrepareCache().encode(data);
-    checkBackupMsg(fake_pbft, FakePBFTEngine::backupKeyCommitted(), data);
-    CheckBlockChain(fake_pbft, block_number + 1);
+    if(fake_pbft.consensus()->isLeader()){
+        fake_pbft.consensus()->reqCache()->committedPrepareCache().encode(data);
+        checkBackupMsg(fake_pbft, FakePBFTEngine::backupKeyCommitted(), data);
+    }
+    // 在重新设计的PBFT里，checkAndCommit还不能达成共识落盘
+    CheckBlockChain(fake_pbft, block_number);
 }
 
 BOOST_AUTO_TEST_CASE(testIsCommitReqValid)
@@ -529,8 +545,13 @@ BOOST_AUTO_TEST_CASE(testHandleCommitMsg)
     int64_t block_number = obtainBlockNumber(fake_pbft);
     fake_pbft.consensus()->handleCommitMsg(commitReq2, pbftMsg);
     BOOST_CHECK(commitReq2 == commitReq);
-    BOOST_CHECK(fake_pbft.consensus()->reqCache()->isExistCommit(commitReq2));
-    CheckBlockChain(fake_pbft, block_number);
+    if(fake_pbft.consensus()->isLeader())
+    {
+        BOOST_CHECK(fake_pbft.consensus()->reqCache()->isExistCommit(commitReq2));
+        CheckBlockChain(fake_pbft, block_number);
+    }
+    // 对于不够数的signReq和commitReq，理应不进入下一个提交区块阶段
+    // TODO: 需要增加对非leader的检测
 
     /// case2: with enough signReq but not commitReq
     fake_pbft.consensus()->reqCache()->clearAll();
@@ -539,8 +560,11 @@ BOOST_AUTO_TEST_CASE(testHandleCommitMsg)
     FakeSignAndCommitCache(fake_pbft, prepareReq, highest, 0, 0,
         fake_pbft.consensus()->minValidNodes(), 0, false, false);
     fake_pbft.consensus()->handleCommitMsg(commitReq2, pbftMsg);
-    BOOST_CHECK(fake_pbft.consensus()->reqCache()->isExistCommit(commitReq2));
-    CheckBlockChain(fake_pbft, block_number);
+    if(fake_pbft.consensus()->isLeader())
+    {
+        BOOST_CHECK(fake_pbft.consensus()->reqCache()->isExistCommit(commitReq2));
+        CheckBlockChain(fake_pbft, block_number);
+    }
 
     /// case3 : with enough signReq and commitReq
     fake_pbft.consensus()->reqCache()->clearAll();
