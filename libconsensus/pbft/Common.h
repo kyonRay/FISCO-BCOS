@@ -373,6 +373,7 @@ struct PrepareReq : public PBFTMsg
 /// signature request
 struct SignReq : public PBFTMsg
 {
+    std::vector<std::pair<u256, Signature>> m_collect_list;
     SignReq() = default;
 
     /**
@@ -392,11 +393,52 @@ struct SignReq : public PBFTMsg
         sig = signHash(block_hash, keyPair);
         sig2 = signHash(fieldsWithoutBlock(), keyPair);
     }
+    virtual void encode(bytes& encodedBytes) const
+    {
+        RLPStream tmp;
+        streamRLPFields(tmp);
+        RLPStream list_rlp;
+        list_rlp.appendList(1).append(tmp.out());
+        list_rlp.swapOut(encodedBytes);
+    }
+    virtual void decode(bytesConstRef data, size_t const& index = 0)
+    {
+        RLP rlp(data);
+        populate(rlp[index]);
+    }
+    void setCollectList(std::vector<std::pair<u256, Signature>> const& _l) { m_collect_list = _l; }
+    virtual void streamRLPFields(RLPStream& _s) const
+    {
+        _s << height << view << idx << timestamp << block_hash << sig.asBytes() << sig2.asBytes()
+           << m_collect_list;
+    }
+    virtual void populate(RLP const& rlp)
+    {
+        int field = 0;
+        try
+        {
+            height = rlp[field = 0].toInt<int64_t>();
+            view = rlp[field = 1].toInt<VIEWTYPE>();
+            idx = rlp[field = 2].toInt<IDXTYPE>();
+            timestamp = rlp[field = 3].toInt<u256>();
+            block_hash = rlp[field = 4].toHash<h256>(RLP::VeryStrict);
+            sig = dev::Signature(rlp[field = 5].toBytesConstRef());
+            sig2 = dev::Signature(rlp[field = 6].toBytesConstRef());
+            m_collect_list = rlp[field = 7].toVector<std::pair<u256, Signature>>();
+        }
+        catch (Exception const& _e)
+        {
+            _e << dev::eth::errinfo_name("invalid msg format")
+               << dev::eth::BadFieldError(field, toHex(rlp[field].data().toBytes()));
+            throw;
+        }
+    }
 };
 
 /// commit request
 struct CommitReq : public PBFTMsg
 {
+    std::vector<std::pair<u256, Signature>> m_collect_list;
     CommitReq() = default;
     /**
      * @brief: populate the CommitReq from given PrepareReq and node index
@@ -414,6 +456,46 @@ struct CommitReq : public PBFTMsg
         block_hash = req.block_hash;
         sig = signHash(block_hash, keyPair);
         sig2 = signHash(fieldsWithoutBlock(), keyPair);
+    }
+    virtual void encode(bytes& encodedBytes) const
+    {
+        RLPStream tmp;
+        streamRLPFields(tmp);
+        RLPStream list_rlp;
+        list_rlp.appendList(1).append(tmp.out());
+        list_rlp.swapOut(encodedBytes);
+    }
+    virtual void decode(bytesConstRef data, size_t const& index = 0)
+    {
+        RLP rlp(data);
+        populate(rlp[index]);
+    }
+    void setCollectList(std::vector<std::pair<u256, Signature>> const& _l) { m_collect_list = _l; }
+    virtual void streamRLPFields(RLPStream& _s) const
+    {
+        _s << height << view << idx << timestamp << block_hash << sig.asBytes() << sig2.asBytes()
+           << m_collect_list;
+    }
+    virtual void populate(RLP const& rlp)
+    {
+        int field = 0;
+        try
+        {
+            height = rlp[field = 0].toInt<int64_t>();
+            view = rlp[field = 1].toInt<VIEWTYPE>();
+            idx = rlp[field = 2].toInt<IDXTYPE>();
+            timestamp = rlp[field = 3].toInt<u256>();
+            block_hash = rlp[field = 4].toHash<h256>(RLP::VeryStrict);
+            sig = dev::Signature(rlp[field = 5].toBytesConstRef());
+            sig2 = dev::Signature(rlp[field = 6].toBytesConstRef());
+            m_collect_list = rlp[field = 7].toVector<std::pair<u256, Signature>>();
+        }
+        catch (Exception const& _e)
+        {
+            _e << dev::eth::errinfo_name("invalid msg format")
+               << dev::eth::BadFieldError(field, toHex(rlp[field].data().toBytes()));
+            throw;
+        }
     }
 };
 

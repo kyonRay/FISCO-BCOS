@@ -77,7 +77,8 @@ public:
     {
         return getSizeFromCache(toView, m_recvViewChangeReq);
     }
-
+    bool collectSigReqList(SignReq& req, IDXTYPE const& minSigSize);
+    bool collectCommitReqList(CommitReq& req, IDXTYPE const& minSigSize);
     template <typename T, typename S>
     inline size_t getSizeFromCache(T const& key, S& cache) const
     {

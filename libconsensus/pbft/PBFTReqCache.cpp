@@ -76,6 +76,56 @@ bool PBFTReqCache::generateAndSetSigList(dev::eth::Block& block, IDXTYPE const& 
     return false;
 }
 
+bool PBFTReqCache::collectSigReqList(SignReq& req, IDXTYPE const& minSigSize)
+{
+    std::vector<std::pair<u256, Signature>> sig_list;
+    auto cacheSize = m_signCache.count(m_prepareCache.block_hash);
+
+    if (cacheSize > 0)
+    {
+        for (auto const& item : m_signCache[m_prepareCache.block_hash])
+        {
+            sig_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
+        }
+        if (sig_list.size() < minSigSize)
+        {
+            return false;
+        }
+        req.setCollectList(sig_list);
+    }
+    else
+    {
+        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectSigReqList")
+                                  << LOG_KV("cacheSize", cacheSize);
+    }
+    return true;
+}
+bool PBFTReqCache::collectCommitReqList(CommitReq& req, IDXTYPE const& minSigSize)
+{
+    std::vector<std::pair<u256, Signature>> com_list;
+    auto cacheSize = m_commitCache.count(m_prepareCache.block_hash);
+    if (cacheSize > 0)
+    {
+        for (auto const& item : m_commitCache[m_prepareCache.block_hash])
+        {
+            com_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
+        }
+        if (com_list.size() < minSigSize)
+        {
+            return false;
+        }
+        req.setCollectList(com_list);
+    }
+    else
+    {
+        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectCommitReqList")
+                                  << LOG_KV("cacheSize", cacheSize);
+    }
+
+    return true;
+}
+
+
 /**
  * @brief: determine can trigger viewchange or not
  * @param minView: return value, the min view of the received-viewchange requests

@@ -219,7 +219,7 @@ protected:
     bool broadcastMsg(unsigned const& packetType, std::string const& key, bytesConstRef data,
         std::unordered_set<dev::network::NodeID> const& filter =
             std::unordered_set<dev::network::NodeID>(),
-        unsigned const& ttl = 0);
+        unsigned const& ttl = 1);
 
     void sendViewChangeMsg(dev::network::NodeID const& nodeId);
     bool sendMsg(dev::network::NodeID const& nodeId, unsigned const& packetType,
@@ -227,13 +227,14 @@ protected:
     bool sendMsg2Leader(unsigned const& packetType, bytesConstRef data, unsigned const& ttl = 1);
     /// 1. generate and broadcast signReq according to given prepareReq
     /// 2. add the generated signReq into the cache
-    bool broadcastSignReq(PrepareReq const& req);
-    bool sendSignReq(PrepareReq const& req);
-    bool sendCommitReq(PrepareReq const& req);
-
+    bool broadcastSignReq(PrepareReq const& req, bool isCollect = false);
+    bool sendSignReq2Leader(PrepareReq const& req);
+    bool sendCommitReq2Leader(PrepareReq const& req);
+    bool isColSignEnough(SignReq const& req);
+    bool isColCommitEnough(CommitReq const& req);
 
     /// broadcast commit message
-    bool broadcastCommitReq(PrepareReq const& req);
+    bool broadcastCommitReq(PrepareReq const& req, bool isCollect = false);
     /// broadcast view change message
     bool shouldBroadcastViewChange();
     bool broadcastViewChangeReq();
@@ -587,7 +588,8 @@ protected:
 
     std::condition_variable m_signalled;
     Mutex x_signalled;
-
+    std::atomic_bool m_isSignEnough = {false};
+    std::atomic_bool m_isCommitEnough = {false};
 
     std::function<void()> m_onViewChange = nullptr;
     std::function<void(dev::h256Hash const& filter)> m_onNotifyNextLeaderReset = nullptr;
