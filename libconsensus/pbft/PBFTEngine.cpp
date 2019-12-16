@@ -1201,6 +1201,7 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
     {
         return true;
     }
+    m_reqCache->addSignReq(sign_req);
     /**
      * 1. 如果是leader，检查签名缓存是否到达2/3
      * 2. 如果不是，检查leader发来的消息是否包含2/3个签名消息，发commit消息
@@ -1208,7 +1209,6 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
     if (nodeIdx() == getLeader().second)  // is leader
     {
         updateViewMap(sign_req.idx, sign_req.view);
-        m_reqCache->addSignReq(sign_req);
         checkAndCommit();
     }
     else  // not leader
@@ -1218,17 +1218,20 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
             return false;
         }
         updateViewMap(sign_req.idx, sign_req.view);
-        if (isColSignEnough(sign_req))
+        if (!m_isSignEnough)
         {
-            sendCommitReq2Leader(m_reqCache->prepareCache());
-            m_isSignEnough.store(true);
-            checkAndCommit();
-        }
-        else
-        {
-            PBFTENGINE_LOG(INFO) << LOG_DESC("handleSignMsg faild")
-                                 << LOG_KV("isCollectSignEnough", isColSignEnough(sign_req));
-            return false;
+            if (isColSignEnough(sign_req))
+            {
+                sendCommitReq2Leader(m_reqCache->prepareCache());
+                m_isSignEnough.store(true);
+                checkAndCommit();
+            }
+            else
+            {
+                PBFTENGINE_LOG(INFO)
+                    << LOG_DESC("handleSignMsg faild") << LOG_KV("isCollectSignEnough", false);
+                return false;
+            }
         }
     }
     PBFTENGINE_LOG(INFO) << LOG_DESC("handleSignMsg Succ") << LOG_KV("Timecost", 1000 * t.elapsed())
@@ -1331,10 +1334,11 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
     {
         return true;
     }
+    m_reqCache->addCommitReq(commit_req);
+
     if (nodeIdx() == getLeader().second)  // is leader
     {
         updateViewMap(commit_req.idx, commit_req.view);
-        m_reqCache->addCommitReq(commit_req);
         checkAndSave();
     }
     else  // is not leader
@@ -1344,16 +1348,19 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
             return false;
         }
         updateViewMap(commit_req.idx, commit_req.view);
-        if (isColCommitEnough(commit_req))
+        if (!m_isCommitEnough)
         {
-            m_isCommitEnough.store(true);
-            checkAndSave();
-        }
-        else
-        {
-            PBFTENGINE_LOG(INFO) << LOG_DESC("handleCommitMsg faild")
-                                 << LOG_KV("isColCommitEnough", isColCommitEnough(commit_req));
-            return false;
+            if (isColCommitEnough(commit_req))
+            {
+                m_isCommitEnough.store(true);
+                checkAndSave();
+            }
+            else
+            {
+                PBFTENGINE_LOG(INFO)
+                    << LOG_DESC("handleCommitMsg faild") << LOG_KV("isColCommitEnough", false);
+                return false;
+            }
         }
     }
 

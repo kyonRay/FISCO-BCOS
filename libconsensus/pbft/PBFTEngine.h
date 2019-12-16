@@ -219,7 +219,7 @@ protected:
     bool broadcastMsg(unsigned const& packetType, std::string const& key, bytesConstRef data,
         std::unordered_set<dev::network::NodeID> const& filter =
             std::unordered_set<dev::network::NodeID>(),
-        unsigned const& ttl = 1);
+        unsigned const& ttl = 0);
 
     void sendViewChangeMsg(dev::network::NodeID const& nodeId);
     bool sendMsg(dev::network::NodeID const& nodeId, unsigned const& packetType,
