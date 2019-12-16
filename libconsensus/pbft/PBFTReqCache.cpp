@@ -79,46 +79,39 @@ bool PBFTReqCache::generateAndSetSigList(dev::eth::Block& block, IDXTYPE const& 
 bool PBFTReqCache::collectSigReqList(SignReq& req, IDXTYPE const& minSigSize)
 {
     std::vector<std::pair<u256, Signature>> sig_list;
-    auto cacheSize = m_signCache.count(m_prepareCache.block_hash);
+    auto cacheSize = getSigCacheSize(m_prepareCache.block_hash);
 
-    if (cacheSize > 0)
+    if (cacheSize >= minSigSize)
     {
         for (auto const& item : m_signCache[m_prepareCache.block_hash])
         {
             sig_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
         }
-        if (sig_list.size() < minSigSize)
-        {
-            return false;
-        }
         req.setCollectList(sig_list);
     }
     else
     {
-        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectSigReqList")
-                                  << LOG_KV("cacheSize", cacheSize);
+        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectSigReqList FAIL")
+                                  << LOG_KV("cacheSize", cacheSize)
+                                  << LOG_KV("minSigSize", minSigSize);
     }
     return true;
 }
 bool PBFTReqCache::collectCommitReqList(CommitReq& req, IDXTYPE const& minSigSize)
 {
     std::vector<std::pair<u256, Signature>> com_list;
-    auto cacheSize = m_commitCache.count(m_prepareCache.block_hash);
-    if (cacheSize > 0)
+    auto cacheSize = getCommitCacheSize(m_prepareCache.block_hash);
+    if (cacheSize >= minSigSize)
     {
         for (auto const& item : m_commitCache[m_prepareCache.block_hash])
         {
             com_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
         }
-        if (com_list.size() < minSigSize)
-        {
-            return false;
-        }
         req.setCollectList(com_list);
     }
     else
     {
-        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectCommitReqList")
+        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectCommitReqList FAIL")
                                   << LOG_KV("cacheSize", cacheSize);
     }
 

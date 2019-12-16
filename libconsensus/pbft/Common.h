@@ -406,7 +406,10 @@ struct SignReq : public PBFTMsg
         RLP rlp(data);
         populate(rlp[index]);
     }
-    void setCollectList(std::vector<std::pair<u256, Signature>> const& _l) { m_collect_list = _l; }
+    inline void setCollectList(std::vector<std::pair<u256, Signature>> const& _l)
+    {
+        m_collect_list = _l;
+    }
     virtual void streamRLPFields(RLPStream& _s) const
     {
         _s << height << view << idx << timestamp << block_hash << sig.asBytes() << sig2.asBytes()
@@ -470,7 +473,10 @@ struct CommitReq : public PBFTMsg
         RLP rlp(data);
         populate(rlp[index]);
     }
-    void setCollectList(std::vector<std::pair<u256, Signature>> const& _l) { m_collect_list = _l; }
+    inline void setCollectList(std::vector<std::pair<u256, Signature>> const& _l)
+    {
+        m_collect_list = _l;
+    }
     virtual void streamRLPFields(RLPStream& _s) const
     {
         _s << height << view << idx << timestamp << block_hash << sig.asBytes() << sig2.asBytes()
