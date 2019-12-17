@@ -47,6 +47,7 @@ void PBFTReqCache::delCache(h256 const& hash)
     {
         m_prepareCache.clear();
     }
+    m_commitCollectCache.clear();
 }
 
 /**
@@ -65,6 +66,23 @@ bool PBFTReqCache::generateAndSetSigList(dev::eth::Block& block, IDXTYPE const& 
             sig_list.push_back(
                 std::make_pair(u256(item.second.idx), Signature(item.first.c_str())));
         }
+        if (sig_list.size() < minSigSize)
+        {
+            return false;
+        }
+        /// set siglist for prepare cache
+        block.setSigList(sig_list);
+        return true;
+    }
+    return false;
+}
+
+bool PBFTReqCache::commitAndSetSigList(dev::eth::Block& block, IDXTYPE const& minSigSize)
+{
+    std::vector<std::pair<u256, Signature>> sig_list;
+    if (m_commitCollectCache.size() > 0)
+    {
+        sig_list=m_commitCollectCache;
         if (sig_list.size() < minSigSize)
         {
             return false;

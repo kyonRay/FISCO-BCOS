@@ -189,6 +189,10 @@ public:
     inline void updateCommittedPrepare() { m_committedPrepareCache = m_rawPrepareCache; }
     /// obtain the sig-list from m_commitCache, and append the sig-list to given block
     bool generateAndSetSigList(dev::eth::Block& block, const IDXTYPE& minSigSize);
+    bool commitAndSetSigList(dev::eth::Block& block, IDXTYPE const& minSigSize);
+
+    inline void setCommitCollectCache(std::vector<std::pair<u256, Signature>> l){m_commitCollectCache=l;}
+
     ///  determine can trigger viewchange or not
     bool canTriggerViewChange(VIEWTYPE& minView, IDXTYPE const& minInvalidNodeNum,
         VIEWTYPE const& toView, dev::eth::BlockHeader const& highestBlock,
@@ -229,6 +233,7 @@ public:
         m_prepareCache.clear();
         m_signCache.clear();
         m_recvViewChangeReq.clear();
+        m_commitCollectCache.clear();
     }
 
     void removeInvalidFutureCache(dev::eth::BlockHeader const& highestBlockHeader);
@@ -331,6 +336,8 @@ private:
     /// cache for the future prepare cache
     /// key: block hash, value: the cached future prepeare
     std::unordered_map<uint64_t, std::shared_ptr<PrepareReq>> m_futurePrepareCache;
+    /// 对于非leader节点的commit cache
+    std::vector<std::pair<u256, Signature>> m_commitCollectCache;
 };
 }  // namespace consensus
 }  // namespace dev

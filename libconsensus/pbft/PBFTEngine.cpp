@@ -1063,7 +1063,10 @@ void PBFTEngine::checkAndSave()
         {
             /// Block block(m_reqCache->prepareCache().block);
             std::shared_ptr<dev::eth::Block> p_block = m_reqCache->prepareCache().pBlock;
-            m_reqCache->generateAndSetSigList(*p_block, minValidNodes());
+            if(leaderFlag)
+                m_reqCache->generateAndSetSigList(*p_block, minValidNodes());
+            else
+                m_reqCache->commitAndSetSigList(*p_block,minValidNodes());
             auto genSig_time_cost = utcTime() - record_time;
             record_time = utcTime();
             /// callback block chain to commit block
