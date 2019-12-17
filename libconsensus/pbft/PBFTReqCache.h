@@ -191,7 +191,7 @@ public:
     bool generateAndSetSigList(dev::eth::Block& block, const IDXTYPE& minSigSize);
     bool commitAndSetSigList(dev::eth::Block& block, IDXTYPE const& minSigSize);
 
-    inline void setCommitCollectCache(std::vector<std::pair<u256, Signature>> l){m_commitCollectCache=l;}
+    inline void setCommitCollectCache(std::vector<std::pair<u256, Signature>> &_l){m_commitCollectCache=_l;}
 
     ///  determine can trigger viewchange or not
     bool canTriggerViewChange(VIEWTYPE& minView, IDXTYPE const& minInvalidNodeNum,

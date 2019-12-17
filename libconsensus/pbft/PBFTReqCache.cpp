@@ -79,16 +79,10 @@ bool PBFTReqCache::generateAndSetSigList(dev::eth::Block& block, IDXTYPE const& 
 
 bool PBFTReqCache::commitAndSetSigList(dev::eth::Block& block, IDXTYPE const& minSigSize)
 {
-    std::vector<std::pair<u256, Signature>> sig_list;
-    if (m_commitCollectCache.size() > 0)
+    if (m_commitCollectCache.size() >= minSigSize)
     {
-        sig_list=m_commitCollectCache;
-        if (sig_list.size() < minSigSize)
-        {
-            return false;
-        }
         /// set siglist for prepare cache
-        block.setSigList(sig_list);
+        block.setSigList(m_commitCollectCache);
         return true;
     }
     return false;

@@ -1063,15 +1063,26 @@ void PBFTEngine::checkAndSave()
         {
             /// Block block(m_reqCache->prepareCache().block);
             std::shared_ptr<dev::eth::Block> p_block = m_reqCache->prepareCache().pBlock;
-            if(leaderFlag)
-                m_reqCache->generateAndSetSigList(*p_block, minValidNodes());
-            else
-                m_reqCache->commitAndSetSigList(*p_block,minValidNodes());
+            bool sigListFlag = leaderFlag ?
+                                   m_reqCache->generateAndSetSigList(*p_block, minValidNodes()) :
+                                   m_reqCache->commitAndSetSigList(*p_block, minValidNodes());
+
             auto genSig_time_cost = utcTime() - record_time;
             record_time = utcTime();
-            /// callback block chain to commit block
-            CommitResult ret = m_blockChain->commitBlock((*p_block),
-                std::shared_ptr<ExecutiveContext>(m_reqCache->prepareCache().p_execContext));
+            CommitResult ret;
+            if (!sigListFlag)
+            {
+                PBFTENGINE_LOG(ERROR) << LOG_DESC("sigList generate failed")
+                                      << LOG_KV("sigList size", p_block->sigList().size())
+                                      << LOG_KV("isLeader", leaderFlag);
+                ret = CommitResult::ERROR_COMMITTING;
+            }
+            else
+            {
+                /// callback block chain to commit block
+                ret = m_blockChain->commitBlock((*p_block),
+                    std::shared_ptr<ExecutiveContext>(m_reqCache->prepareCache().p_execContext));
+            }
             auto commitBlock_time_cost = utcTime() - record_time;
             record_time = utcTime();
             m_isSignEnough.store(false);
@@ -1209,9 +1220,10 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
      * 1. 如果是leader，检查签名缓存是否到达2/3
      * 2. 如果不是，检查leader发来的消息是否包含2/3个签名消息，发commit消息
      */
+    updateViewMap(sign_req.idx, sign_req.view);
+
     if (nodeIdx() == getLeader().second)  // is leader
     {
-        updateViewMap(sign_req.idx, sign_req.view);
         checkAndCommit();
     }
     else  // not leader
@@ -1220,7 +1232,6 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
         {
             return false;
         }
-        updateViewMap(sign_req.idx, sign_req.view);
         if (!m_isSignEnough)
         {
             if (isColSignEnough(sign_req))
@@ -1338,10 +1349,10 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
         return true;
     }
     m_reqCache->addCommitReq(commit_req);
+    updateViewMap(commit_req.idx, commit_req.view);
 
     if (nodeIdx() == getLeader().second)  // is leader
     {
-        updateViewMap(commit_req.idx, commit_req.view);
         checkAndSave();
     }
     else  // is not leader
@@ -1350,11 +1361,11 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
         {
             return false;
         }
-        updateViewMap(commit_req.idx, commit_req.view);
         if (!m_isCommitEnough)
         {
             if (isColCommitEnough(commit_req))
             {
+                m_reqCache->setCommitCollectCache(commit_req.m_collect_list);
                 m_isCommitEnough.store(true);
                 checkAndSave();
             }
