@@ -230,8 +230,14 @@ protected:
     bool broadcastSignReq(PrepareReq const& req, bool isCollect = false);
     bool sendSignReq2Leader(PrepareReq const& req);
     bool sendCommitReq2Leader(PrepareReq const& req);
-    bool isColSignEnough(SignReq const& req);
-    bool isColCommitEnough(CommitReq const& req);
+    inline bool isColSignEnough(SignReq const& req)
+    {
+        return req.m_collect_list.size() >= minValidNodes();
+    }
+    inline bool isColCommitEnough(CommitReq const& req)
+    {
+        return req.m_collect_list.size() >= minValidNodes();
+    }
 
     /// broadcast commit message
     bool broadcastCommitReq(PrepareReq const& req, bool isCollect = false);

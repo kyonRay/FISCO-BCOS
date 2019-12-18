@@ -322,7 +322,7 @@ bool PBFTEngine::sendSignReq2Leader(PrepareReq const& req)
     SignReq sign_req(req, m_keyPair, nodeIdx());
     bytes sign_req_data;
     sign_req.encode(sign_req_data);
-    // bool succ = broadcastMsg(SignReqPacket, sign_req.uniqueKey(), ref(sign_req_data));
+    m_reqCache->addSignReq(sign_req);
     bool succ = sendMsg2Leader(SignReqPacket, ref(sign_req_data));
     return succ;
 }
@@ -333,7 +333,7 @@ bool PBFTEngine::sendCommitReq2Leader(PrepareReq const& req)
     bytes commit_req_data;
     commit_req.encode(commit_req_data);
     bool succ = sendMsg2Leader(CommitReqPacket, ref(commit_req_data));
-    // m_reqCache->addCommitReq(commit_req);
+    m_reqCache->addCommitReq(commit_req);
     return succ;
 }
 
@@ -341,13 +341,8 @@ bool PBFTEngine::sendMsg2Leader(unsigned const& packetType, bytesConstRef data, 
 {
     dev::network::NodeID leaderID;
     bool succ = getNodeIDByIndex(leaderID, getLeader().second);
-    if (!succ)
-    {
-        PBFTENGINE_LOG(ERROR) << LOG_DESC("getNodeIDByIndex");
-        return succ;
-    }
     auto sessions = m_service->sessionInfosByProtocolID(m_protocolId);
-    if (sessions.size() == 0)
+    if (sessions.size() == 0 || !succ)
     {
         return false;
     }
@@ -1014,11 +1009,6 @@ void PBFTEngine::checkAndSave()
     auto record_time = utcTime();
     size_t sign_size;
     size_t commit_size;
-    /**
-     * leader计算是否达到2/3
-     * 非leader直接进入
-     * TODO: 需要改进非leader
-     */
     bool leaderFlag = (nodeIdx() == getLeader().second);
     if (leaderFlag)
     {
@@ -1211,6 +1201,8 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
     {
         return false;
     }
+    updateViewMap(sign_req.idx, sign_req.view);
+
     if (check_ret == CheckResult::FUTURE)
     {
         return true;
@@ -1220,8 +1212,6 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
      * 1. 如果是leader，检查签名缓存是否到达2/3
      * 2. 如果不是，检查leader发来的消息是否包含2/3个签名消息，发commit消息
      */
-    updateViewMap(sign_req.idx, sign_req.view);
-
     if (nodeIdx() == getLeader().second)  // is leader
     {
         checkAndCommit();
@@ -1288,33 +1278,6 @@ CheckResult PBFTEngine::isValidSignReq(SignReq const& req, std::ostringstream& o
     return result;
 }
 
-bool PBFTEngine::isColSignEnough(SignReq const& req)
-{
-    auto countSize = req.m_collect_list.size();
-    if (countSize >= minValidNodes())
-    {
-        return true;
-    }
-    else
-    {
-        PBFTENGINE_LOG(WARNING) << LOG_DESC("isColSignEnough") << LOG_KV("countSize", countSize);
-        return false;
-    }
-}
-bool PBFTEngine::isColCommitEnough(CommitReq const& req)
-{
-    auto countSize = req.m_collect_list.size();
-    if (countSize >= minValidNodes())
-    {
-        return true;
-    }
-    else
-    {
-        PBFTENGINE_LOG(WARNING) << LOG_DESC("isColCommitEnough") << LOG_KV("countSize", countSize);
-        return false;
-    }
-}
-
 /**
  * @brief : 1. decode the network-received message into commitReq
  *          2. check the validation of the commitReq
@@ -1344,12 +1307,12 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
         return false;
     }
     /// update the view for given idx
+    updateViewMap(commit_req.idx, commit_req.view);
     if (valid_ret == CheckResult::FUTURE)
     {
         return true;
     }
     m_reqCache->addCommitReq(commit_req);
-    updateViewMap(commit_req.idx, commit_req.view);
 
     if (nodeIdx() == getLeader().second)  // is leader
     {
