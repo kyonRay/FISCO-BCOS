@@ -208,6 +208,7 @@ public:
         m_prepareCache.clear();
         m_signCache.clear();
         m_commitCache.clear();
+        m_commitCollectCache.clear();
         m_futurePrepareCache.clear();
         removeInvalidViewChange(curView);
     }
