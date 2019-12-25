@@ -313,7 +313,6 @@ bool PBFTEngine::broadcastSignReq(PrepareReq const& req, bool isCollect)
     }
     sign_req.encode(sign_req_data);
     bool succ = broadcastMsg(SignReqPacket, sign_req.uniqueKey(), ref(sign_req_data));
-    m_reqCache->addSignReq(sign_req);
     return succ;
 }
 
@@ -405,8 +404,6 @@ bool PBFTEngine::broadcastCommitReq(PrepareReq const& req, bool isCollect)
     }
     commit_req.encode(commit_req_data);
     bool succ = broadcastMsg(CommitReqPacket, commit_req.uniqueKey(), ref(commit_req_data));
-    if (succ)
-        m_reqCache->addCommitReq(commit_req);
     return succ;
 }
 
@@ -929,7 +926,8 @@ bool PBFTEngine::handlePrepareMsg(PrepareReq const& prepareReq, std::string cons
                           << LOG_KV("myNode", m_keyPair.pub().abridged());
 
     // not a leader
-    if (nodeIdx() != getLeader().second && !m_isSignEnough)
+    bool leaderFlag = (nodeIdx() == getLeader().second);
+    if (!leaderFlag && !m_isSignEnough)
     {
         // send re-generate PrepareReq to leader
         if (!sendSignReq2Leader(sign_prepare))
@@ -937,6 +935,12 @@ bool PBFTEngine::handlePrepareMsg(PrepareReq const& prepareReq, std::string cons
             PBFTENGINE_LOG(WARNING)
                 << LOG_DESC("sendSignReq2Leader failed") << LOG_KV("INFO", oss.str());
         }
+    }
+    // leader 应该在这个时候把自己的signreq加入到cache
+    if (leaderFlag)
+    {
+        SignReq sign_req(sign_prepare, m_keyPair, nodeIdx());
+        m_reqCache->addSignReq(sign_req);
     }
     checkAndCommit();
     PBFTENGINE_LOG(INFO) << LOG_DESC("handlePrepareMsg Succ")
@@ -995,6 +999,9 @@ void PBFTEngine::checkAndCommit()
             {
                 PBFTENGINE_LOG(WARNING) << LOG_DESC("checkAndCommit: broadcastSignReq failed");
             }
+            // leader在这个时候已经达成了Prepare阶段的共识，可以将自己的commitreq加入到cache
+            CommitReq commit_req(m_reqCache->prepareCache(), m_keyPair, nodeIdx());
+            m_reqCache->addCommitReq(commit_req);
         }
         m_timeManager.m_lastSignTime = utcTime();
         checkAndSave();
