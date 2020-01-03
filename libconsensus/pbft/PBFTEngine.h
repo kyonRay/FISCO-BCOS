@@ -193,6 +193,22 @@ public:
         }
         return std::make_pair(true, (m_view + m_highestBlock.number()) % m_nodeNum);
     }
+    inline std::pair<bool, IDXTYPE> getSCollector() const
+    {
+        if (m_cfgErr || m_leaderFailed || m_highestBlock.sealer() == Invalid256 || m_nodeNum == 0)
+        {
+            return std::make_pair(false, MAXIDX);
+        }
+        return std::make_pair(true, (m_view + m_highestBlock.number() + 1) % m_nodeNum);
+    }
+    inline std::pair<bool, IDXTYPE> getCCollector() const
+    {
+        if (m_cfgErr || m_leaderFailed || m_highestBlock.sealer() == Invalid256 || m_nodeNum == 0)
+        {
+            return std::make_pair(false, MAXIDX);
+        }
+        return std::make_pair(true, (m_view + m_highestBlock.number() + 2) % m_nodeNum);
+    }
 
     uint64_t sealingTxNumber() const { return m_sealingNumber; }
 
@@ -224,12 +240,13 @@ protected:
     void sendViewChangeMsg(dev::network::NodeID const& nodeId);
     bool sendMsg(dev::network::NodeID const& nodeId, unsigned const& packetType,
         std::string const& key, bytesConstRef data, unsigned const& ttl = 1);
-    bool sendMsg2Leader(unsigned const& packetType, bytesConstRef data, unsigned const& ttl = 1);
+    bool sendMsg2Node(dev::network::NodeID const& nodeId, unsigned const& packetType,
+        bytesConstRef data, unsigned const& ttl = 1);
     /// 1. generate and broadcast signReq according to given prepareReq
     /// 2. add the generated signReq into the cache
     bool broadcastSignReq(PrepareReq const& req, bool isCollect = false);
-    bool sendSignReq2Leader(PrepareReq const& req);
-    bool sendCommitReq2Leader(PrepareReq const& req);
+    bool sendSignReq2Collector(PrepareReq const& req);
+    bool sendCommitReq2Collector(PrepareReq const& req);
     inline bool isColSignEnough(SignReq const& req)
     {
         return req.m_collect_list.size() >= minValidNodes();

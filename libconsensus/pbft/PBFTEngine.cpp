@@ -316,43 +316,46 @@ bool PBFTEngine::broadcastSignReq(PrepareReq const& req, bool isCollect)
     return succ;
 }
 
-bool PBFTEngine::sendSignReq2Leader(PrepareReq const& req)
+bool PBFTEngine::sendSignReq2Collector(PrepareReq const& req)
 {
     SignReq sign_req(req, m_keyPair, nodeIdx());
     bytes sign_req_data;
     sign_req.encode(sign_req_data);
     m_reqCache->addSignReq(sign_req);
-    bool succ = sendMsg2Leader(SignReqPacket, ref(sign_req_data));
+    dev::network::NodeID signCollectorID;
+    getNodeIDByIndex(signCollectorID, getSCollector().second);
+    bool succ = sendMsg2Node(signCollectorID, SignReqPacket, ref(sign_req_data));
     return succ;
 }
 
-bool PBFTEngine::sendCommitReq2Leader(PrepareReq const& req)
+bool PBFTEngine::sendCommitReq2Collector(PrepareReq const& req)
 {
     CommitReq commit_req(req, m_keyPair, nodeIdx());
     bytes commit_req_data;
     commit_req.encode(commit_req_data);
-    bool succ = sendMsg2Leader(CommitReqPacket, ref(commit_req_data));
+    dev::network::NodeID commitCollectorID;
+    getNodeIDByIndex(commitCollectorID, getCCollector().second);
+    bool succ = sendMsg2Node(commitCollectorID, CommitReqPacket, ref(commit_req_data));
     m_reqCache->addCommitReq(commit_req);
     return succ;
 }
 
-bool PBFTEngine::sendMsg2Leader(unsigned const& packetType, bytesConstRef data, unsigned const& ttl)
+bool PBFTEngine::sendMsg2Node(dev::network::NodeID const& nodeId, unsigned const& packetType,
+    bytesConstRef data, unsigned const& ttl)
 {
-    dev::network::NodeID leaderID;
-    bool succ = getNodeIDByIndex(leaderID, getLeader().second);
     auto sessions = m_service->sessionInfosByProtocolID(m_protocolId);
-    if (sessions.size() == 0 || !succ)
+    if (sessions.size() == 0)
     {
         return false;
     }
     for (auto session : sessions)
     {
-        if (session.nodeID() == leaderID)
+        if (session.nodeID() == nodeId)
         {
             m_service->asyncSendMessageByNodeID(
                 session.nodeID(), transDataToMessage(data, packetType, ttl), nullptr);
-            PBFTENGINE_LOG(DEBUG) << LOG_DESC("sendMsg2Leader") << LOG_KV("packetType", packetType)
-                                  << LOG_KV("leaderId", leaderID.abridged())
+            PBFTENGINE_LOG(DEBUG) << LOG_DESC("sendMsg2Node") << LOG_KV("packetType", packetType)
+                                  << LOG_KV("toNodeId", nodeId.abridged())
                                   << LOG_KV("remote_endpoint", session.nodeIPEndpoint.name())
                                   << LOG_KV("nodeIdx", nodeIdx())
                                   << LOG_KV("myNode", m_keyPair.pub().abridged());
@@ -919,26 +922,28 @@ bool PBFTEngine::handlePrepareMsg(PrepareReq const& prepareReq, std::string cons
     /// (can't change prepareReq since it may be broadcasted-forwarded to other nodes)
     PrepareReq sign_prepare(prepareReq, workingSealing, m_keyPair);
     m_reqCache->addPrepareReq(sign_prepare);
-    PBFTENGINE_LOG(DEBUG) << LOG_DESC("handlePrepareMsg: add prepare cache and sendSignReq2Leader")
+    PBFTENGINE_LOG(DEBUG) << LOG_DESC(
+                                 "handlePrepareMsg: add prepare cache and sendSignReq2Collector")
                           << LOG_KV("reqNum", sign_prepare.height)
                           << LOG_KV("hash", sign_prepare.block_hash.abridged())
                           << LOG_KV("nodeIdx", nodeIdx())
                           << LOG_KV("myNode", m_keyPair.pub().abridged());
 
-    // not a leader
-    bool leaderFlag = (nodeIdx() == getLeader().second);
-    if (!leaderFlag && !m_isSignEnough)
+    bool signCollectorFlag = (nodeIdx() == getSCollector().second);
+    if (!signCollectorFlag && !m_isSignEnough)
     {
-        // send re-generate PrepareReq to leader
-        if (!sendSignReq2Leader(sign_prepare))
+        // send re-generate PrepareReq to collector
+        if (!sendSignReq2Collector(sign_prepare))
         {
             PBFTENGINE_LOG(WARNING)
-                << LOG_DESC("sendSignReq2Leader failed") << LOG_KV("INFO", oss.str());
+                << LOG_DESC("sendSignReq2Collector failed") << LOG_KV("INFO", oss.str());
         }
     }
-    // leader 应该在这个时候把自己的signreq加入到cache
-    if (leaderFlag)
+    // signCollector 应该在这个时候把自己的signreq加入到cache
+    if (signCollectorFlag)
     {
+        PBFTENGINE_LOG(DEBUG) << LOG_DESC("I am the SignCollector in this view")
+                              << LOG_KV("view", prepareReq.view) << LOG_KV("nodeID", nodeIdx());
         SignReq sign_req(sign_prepare, m_keyPair, nodeIdx());
         m_reqCache->addSignReq(sign_req);
     }
@@ -952,8 +957,8 @@ bool PBFTEngine::handlePrepareMsg(PrepareReq const& prepareReq, std::string cons
 void PBFTEngine::checkAndCommit()
 {
     size_t sign_size;
-    bool leaderFlag = (nodeIdx() == getLeader().second);
-    if (leaderFlag)
+    bool signCollectorFlag = (nodeIdx() == getSCollector().second);
+    if (signCollectorFlag)
         sign_size = m_reqCache->getSigCacheSize(m_reqCache->prepareCache().block_hash);
     else
         sign_size = m_isSignEnough ? minValidNodes() : 0;
@@ -987,7 +992,7 @@ void PBFTEngine::checkAndCommit()
                              << LOG_KV("myNode", m_keyPair.pub().abridged());
         backupMsg(c_backupKeyCommitted, m_reqCache->committedPrepareCache());
 
-        if (leaderFlag)
+        if (signCollectorFlag)
         {
             PBFTENGINE_LOG(DEBUG) << LOG_DESC("checkAndCommit: broadcastSignReq")
                                   << LOG_KV("prepareHeight", m_reqCache->prepareCache().height)
@@ -995,13 +1000,13 @@ void PBFTEngine::checkAndCommit()
                                          "hash", m_reqCache->prepareCache().block_hash.abridged())
                                   << LOG_KV("nodeIdx", nodeIdx())
                                   << LOG_KV("myNode", m_keyPair.pub().abridged());
+            m_isSignEnough.store(true);
             if (!broadcastSignReq(m_reqCache->prepareCache(), true))
             {
                 PBFTENGINE_LOG(WARNING) << LOG_DESC("checkAndCommit: broadcastSignReq failed");
             }
-            // leader在这个时候已经达成了Prepare阶段的共识，可以将自己的commitreq加入到cache
-            CommitReq commit_req(m_reqCache->prepareCache(), m_keyPair, nodeIdx());
-            m_reqCache->addCommitReq(commit_req);
+            // signCollector 还需要把commit消息发给commitCollector
+            sendCommitReq2Collector(m_reqCache->prepareCache());
         }
         m_timeManager.m_lastSignTime = utcTime();
         checkAndSave();
@@ -1016,10 +1021,10 @@ void PBFTEngine::checkAndSave()
     auto record_time = utcTime();
     size_t sign_size;
     size_t commit_size;
-    bool leaderFlag = (nodeIdx() == getLeader().second);
-    if (leaderFlag)
+    bool commitCollectorFlag = (nodeIdx() == getCCollector().second);
+    if (commitCollectorFlag)
     {
-        sign_size = m_reqCache->getSigCacheSize(m_reqCache->prepareCache().block_hash);
+        sign_size = m_isSignEnough ? minValidNodes() : 0;
         commit_size = m_reqCache->getCommitCacheSize(m_reqCache->prepareCache().block_hash);
     }
     else
@@ -1047,7 +1052,7 @@ void PBFTEngine::checkAndSave()
                                   << LOG_KV("myNode", m_keyPair.pub().abridged());
             return;
         }
-        if (leaderFlag)
+        if (commitCollectorFlag)
         {
             if (!broadcastCommitReq(m_reqCache->prepareCache(), true))
             {
@@ -1060,7 +1065,7 @@ void PBFTEngine::checkAndSave()
         {
             /// Block block(m_reqCache->prepareCache().block);
             std::shared_ptr<dev::eth::Block> p_block = m_reqCache->prepareCache().pBlock;
-            bool sigListFlag = leaderFlag ?
+            bool sigListFlag = commitCollectorFlag ?
                                    m_reqCache->generateAndSetSigList(*p_block, minValidNodes()) :
                                    m_reqCache->commitAndSetSigList(*p_block, minValidNodes());
 
@@ -1071,7 +1076,7 @@ void PBFTEngine::checkAndSave()
             {
                 PBFTENGINE_LOG(ERROR) << LOG_DESC("sigList generate failed")
                                       << LOG_KV("sigList size", p_block->sigList().size())
-                                      << LOG_KV("isLeader", leaderFlag);
+                                      << LOG_KV("isCollector", commitCollectorFlag);
                 ret = CommitResult::ERROR_COMMITTING;
             }
             else
@@ -1197,7 +1202,8 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
     }
     std::ostringstream oss;
     oss << LOG_DESC("handleSignMsg") << LOG_KV("num", sign_req.height)
-        << LOG_KV("curNum", m_highestBlock.number()) << LOG_KV("GenIdx", sign_req.idx)
+        << LOG_KV("curNum", m_highestBlock.number())
+        << LOG_KV("signSize", sign_req.m_collect_list.size()) << LOG_KV("GenIdx", sign_req.idx)
         << LOG_KV("Sview", sign_req.view) << LOG_KV("view", m_view)
         << LOG_KV("fromIdx", pbftMsg.node_idx) << LOG_KV("fromNode", pbftMsg.node_id.abridged())
         << LOG_KV("fromIp", pbftMsg.endpoint) << LOG_KV("hash", sign_req.block_hash.abridged())
@@ -1219,13 +1225,13 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
      * 1. 如果是leader，检查签名缓存是否到达2/3
      * 2. 如果不是，检查leader发来的消息是否包含2/3个签名消息，发commit消息
      */
-    if (nodeIdx() == getLeader().second)  // is leader
+    if (nodeIdx() == getSCollector().second)  // is collector
     {
         checkAndCommit();
     }
-    else  // not leader
+    else  // not collector
     {
-        if (sign_req.idx != getLeader().second)
+        if (sign_req.idx != getSCollector().second)
         {
             return false;
         }
@@ -1233,7 +1239,19 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
         {
             if (isColSignEnough(sign_req))
             {
-                sendCommitReq2Leader(m_reqCache->prepareCache());
+                if (nodeIdx() == getCCollector().second)
+                {
+                    PBFTENGINE_LOG(DEBUG)
+                        << LOG_DESC("I am the CommitCollector in this view")
+                        << LOG_KV("view", sign_req.view) << LOG_KV("nodeID", nodeIdx());
+                    // commitCollector在这个时候已经达成了Prepare阶段的共识，可以将自己的commitreq加入到cache
+                    CommitReq commit_req(m_reqCache->prepareCache(), m_keyPair, nodeIdx());
+                    m_reqCache->addCommitReq(commit_req);
+                }
+                else
+                {
+                    sendCommitReq2Collector(m_reqCache->prepareCache());
+                }
                 m_isSignEnough.store(true);
                 checkAndCommit();
             }
@@ -1303,11 +1321,13 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
     }
     std::ostringstream oss;
     oss << LOG_DESC("handleCommitMsg") << LOG_KV("reqNum", commit_req.height)
-        << LOG_KV("curNum", m_highestBlock.number()) << LOG_KV("GenIdx", commit_req.idx)
-        << LOG_KV("Cview", commit_req.view) << LOG_KV("view", m_view)
-        << LOG_KV("fromIdx", pbftMsg.node_idx) << LOG_KV("fromNode", pbftMsg.node_id.abridged())
-        << LOG_KV("fromIp", pbftMsg.endpoint) << LOG_KV("hash", commit_req.block_hash.abridged())
-        << LOG_KV("nodeIdx", nodeIdx()) << LOG_KV("myNode", m_keyPair.pub().abridged());
+        << LOG_KV("curNum", m_highestBlock.number())
+        << LOG_KV("commitSize", commit_req.m_collect_list.size())
+        << LOG_KV("GenIdx", commit_req.idx) << LOG_KV("Cview", commit_req.view)
+        << LOG_KV("view", m_view) << LOG_KV("fromIdx", pbftMsg.node_idx)
+        << LOG_KV("fromNode", pbftMsg.node_id.abridged()) << LOG_KV("fromIp", pbftMsg.endpoint)
+        << LOG_KV("hash", commit_req.block_hash.abridged()) << LOG_KV("nodeIdx", nodeIdx())
+        << LOG_KV("myNode", m_keyPair.pub().abridged());
     auto valid_ret = isValidCommitReq(commit_req, oss);
     if (valid_ret == CheckResult::INVALID)
     {
@@ -1321,13 +1341,13 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
     }
     m_reqCache->addCommitReq(commit_req);
 
-    if (nodeIdx() == getLeader().second)  // is leader
+    if (nodeIdx() == getCCollector().second)  // is collector
     {
         checkAndSave();
     }
-    else  // is not leader
+    else  // is not collector
     {
-        if (commit_req.idx != getLeader().second)
+        if (commit_req.idx != getCCollector().second)
         {
             return false;
         }
