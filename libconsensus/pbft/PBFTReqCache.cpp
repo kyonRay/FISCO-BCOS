@@ -59,9 +59,9 @@ void PBFTReqCache::delCache(h256 const& hash)
 bool PBFTReqCache::generateAndSetSigList(dev::eth::Block& block, IDXTYPE const& minSigSize)
 {
     std::vector<std::pair<u256, Signature>> sig_list;
-    if (m_commitCache.count(m_prepareCache.block_hash) > 0)
+    if (m_signCache.count(m_prepareCache.block_hash) > 0)
     {
-        for (auto const& item : m_commitCache[m_prepareCache.block_hash])
+        for (auto const& item : m_signCache[m_prepareCache.block_hash])
         {
             sig_list.push_back(
                 std::make_pair(u256(item.second.idx), Signature(item.first.c_str())));
@@ -111,15 +111,15 @@ bool PBFTReqCache::collectSigReqList(SignReq& req, IDXTYPE const& minSigSize)
 }
 bool PBFTReqCache::collectCommitReqList(CommitReq& req, IDXTYPE const& minSigSize)
 {
-    std::vector<std::pair<u256, Signature>> com_list;
-    auto cacheSize = getCommitCacheSize(m_prepareCache.block_hash);
+    std::vector<std::pair<u256, Signature>> sign_list;
+    auto cacheSize = getSigCacheSize(m_prepareCache.block_hash);
     if (cacheSize >= minSigSize)
     {
-        for (auto const& item : m_commitCache[m_prepareCache.block_hash])
+        for (auto const& item : m_signCache[m_prepareCache.block_hash])
         {
-            com_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
+            sign_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
         }
-        req.setCollectList(com_list);
+        req.setCollectList(sign_list);
     }
     else
     {
