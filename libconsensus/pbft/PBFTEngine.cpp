@@ -1116,7 +1116,7 @@ void PBFTEngine::checkAndCommit()
                                          "hash", m_reqCache->prepareCache().block_hash.abridged())
                                   << LOG_KV("nodeIdx", nodeIdx())
                                   << LOG_KV("myNode", m_keyPair.pub().abridged());
-            if (!broadcastCommitReq(m_reqCache->prepareCache()))
+            if (!broadcastSignReq(m_reqCache->prepareCache()))
             {
                 PBFTENGINE_LOG(WARNING) << LOG_DESC("checkAndCommit: broadcastCommitReq failed");
             }
@@ -1325,6 +1325,7 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
     oss << LOG_DESC("handleSignMsg") << LOG_KV("num", sign_req.height)
         << LOG_KV("curNum", m_highestBlock.number()) << LOG_KV("GenIdx", sign_req.idx)
         << LOG_KV("Sview", sign_req.view) << LOG_KV("view", m_view)
+        << LOG_KV("sign_size",sign_req.m_collect_list.size())
         << LOG_KV("fromIdx", pbftMsg.node_idx) << LOG_KV("fromNode", pbftMsg.node_id.abridged())
         << LOG_KV("fromIp", pbftMsg.endpoint) << LOG_KV("hash", sign_req.block_hash.abridged())
         << LOG_KV("nodeIdx", nodeIdx()) << LOG_KV("myNode", m_keyPair.pub().abridged());
@@ -1426,6 +1427,7 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
     oss << LOG_DESC("handleCommitMsg") << LOG_KV("reqNum", commit_req.height)
         << LOG_KV("curNum", m_highestBlock.number()) << LOG_KV("GenIdx", commit_req.idx)
         << LOG_KV("Cview", commit_req.view) << LOG_KV("view", m_view)
+        << LOG_KV("commit size",commit_req.m_collect_list.size())
         << LOG_KV("fromIdx", pbftMsg.node_idx) << LOG_KV("fromNode", pbftMsg.node_id.abridged())
         << LOG_KV("fromIp", pbftMsg.endpoint) << LOG_KV("hash", commit_req.block_hash.abridged())
         << LOG_KV("nodeIdx", nodeIdx()) << LOG_KV("myNode", m_keyPair.pub().abridged());
