@@ -264,12 +264,26 @@ protected:
     bool sendMsg(dev::network::NodeID const& nodeId, unsigned const& packetType,
         std::string const& key, bytesConstRef data, unsigned const& ttl = 1,
         std::shared_ptr<dev::h512s> forwardNodes = nullptr);
+
+    bool sendMsg2Leader(unsigned const& packetType, bytesConstRef data, unsigned const& ttl = 1);
+
     /// 1. generate and broadcast signReq according to given prepareReq
     /// 2. add the generated signReq into the cache
     bool broadcastSignReq(PrepareReq const& req);
 
     /// broadcast commit message
     bool broadcastCommitReq(PrepareReq const& req);
+    bool sendSignReq2Leader(PrepareReq const& req);
+    bool sendCommitReq2Leader(PrepareReq const& req);
+
+    inline bool isCollectSignEnough(SignReq const& req)
+    {
+        return req.m_collect_list.size() >= minValidNodes();
+    }
+    inline bool isCollectCommitEnough(CommitReq const& req)
+    {
+        return req.m_collect_list.size() >= minValidNodes();
+    }
     /// broadcast view change message
     bool shouldBroadcastViewChange();
     bool broadcastViewChangeReq();
@@ -679,6 +693,8 @@ protected:
     std::condition_variable m_signalled;
     Mutex x_signalled;
 
+    std::atomic_bool m_isSignEnough = {false};
+    std::atomic_bool m_isCommitEnough = {false};
 
     std::function<void()> m_onViewChange = nullptr;
     std::function<void(dev::h256Hash const& filter)> m_onNotifyNextLeaderReset = nullptr;

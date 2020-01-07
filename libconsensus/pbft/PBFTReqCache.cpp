@@ -50,6 +50,7 @@ void PBFTReqCache::delCache(dev::eth::BlockHeader const& _highestBlockHeader)
     {
         m_prepareCache.clear();
     }
+    m_commitCollectCache.clear();
     removeInvalidFutureCache(_highestBlockHeader.number());
 }
 
@@ -78,6 +79,62 @@ bool PBFTReqCache::generateAndSetSigList(dev::eth::Block& block, IDXTYPE const& 
         return true;
     }
     return false;
+}
+
+bool PBFTReqCache::commitAndSetSigList(dev::eth::Block& block, IDXTYPE const& minSigSize)
+{
+    auto sig_list = std::make_shared<std::vector<std::pair<u256, Signature>>>();
+    if (m_commitCollectCache.size() >= minSigSize)
+    {
+        auto sig_lists = std::make_shared<std::vector<std::pair<u256, Signature>>>(
+            m_commitCollectCache.begin(), m_commitCollectCache.end());
+        block.setSigList(sig_lists);
+        return true;
+    }
+
+    return false;
+}
+
+bool PBFTReqCache::collectSigReqList(SignReq& req, IDXTYPE const& minSigSize)
+{
+    std::vector<std::pair<u256, Signature>> sig_list;
+    auto cacheSize = getSigCacheSize(m_prepareCache.block_hash);
+
+    if (cacheSize >= minSigSize)
+    {
+        for (auto const& item : m_signCache[m_prepareCache.block_hash])
+        {
+            sig_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
+        }
+        req.setCollectList(sig_list);
+    }
+    else
+    {
+        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectSigReqList FAIL")
+                                  << LOG_KV("cacheSize", cacheSize)
+                                  << LOG_KV("minSigSize", minSigSize);
+    }
+    return true;
+}
+bool PBFTReqCache::collectCommitReqList(CommitReq& req, IDXTYPE const& minSigSize)
+{
+    std::vector<std::pair<u256, Signature>> com_list;
+    auto cacheSize = getCommitCacheSize(m_prepareCache.block_hash);
+    if (cacheSize >= minSigSize)
+    {
+        for (auto const& item : m_commitCache[m_prepareCache.block_hash])
+        {
+            com_list.push_back(std::make_pair((item.second.idx), Signature(item.first.c_str())));
+        }
+        req.setCollectList(com_list);
+    }
+    else
+    {
+        PBFTReqCache_LOG(WARNING) << LOG_DESC("collectCommitReqList FAIL")
+                                  << LOG_KV("cacheSize", cacheSize);
+    }
+
+    return true;
 }
 
 /**

@@ -363,10 +363,58 @@ bool PBFTEngine::broadcastSignReq(PrepareReq const& req)
 {
     SignReq sign_req(req, m_keyPair, nodeIdx());
     bytes sign_req_data;
+    m_reqCache->collectSigReqList(sign_req, minValidNodes());
+    PBFTENGINE_LOG(DEBUG) << LOG_DESC("collectSigReqList finished")
+                          << LOG_KV("collectSize", sign_req.m_collect_list.size());
     sign_req.encode(sign_req_data);
     bool succ = broadcastMsg(SignReqPacket, sign_req.uniqueKey(), ref(sign_req_data));
-    m_reqCache->addSignReq(sign_req);
     return succ;
+}
+
+bool PBFTEngine::sendSignReq2Leader(PrepareReq const& req)
+{
+    SignReq sign_req(req, m_keyPair, nodeIdx());
+    bytes sign_req_data;
+    sign_req.encode(sign_req_data);
+    m_reqCache->addSignReq(sign_req);
+    bool succ = sendMsg2Leader(SignReqPacket, ref(sign_req_data));
+    return succ;
+}
+
+bool PBFTEngine::sendCommitReq2Leader(PrepareReq const& req)
+{
+    CommitReq commit_req(req, m_keyPair, nodeIdx());
+    bytes commit_req_data;
+    commit_req.encode(commit_req_data);
+    bool succ = sendMsg2Leader(CommitReqPacket, ref(commit_req_data));
+    m_reqCache->addCommitReq(commit_req);
+    return succ;
+}
+
+bool PBFTEngine::sendMsg2Leader(unsigned const& packetType, bytesConstRef data, unsigned const& ttl)
+{
+    dev::network::NodeID leaderID;
+    bool succ = getNodeIDByIndex(leaderID, getLeader().second);
+    auto sessions = m_service->sessionInfosByProtocolID(m_protocolId);
+    if (sessions.size() == 0 || !succ)
+    {
+        return false;
+    }
+    for (auto session : sessions)
+    {
+        if (session.nodeID() == leaderID)
+        {
+            m_service->asyncSendMessageByNodeID(
+                session.nodeID(), transDataToMessage(data, packetType, ttl), nullptr);
+            PBFTENGINE_LOG(DEBUG) << LOG_DESC("sendMsg2Leader") << LOG_KV("packetType", packetType)
+                                  << LOG_KV("leaderId", leaderID.abridged())
+                                  << LOG_KV("remote_endpoint", session.nodeIPEndpoint.name())
+                                  << LOG_KV("nodeIdx", nodeIdx())
+                                  << LOG_KV("myNode", m_keyPair.pub().abridged());
+            return true;
+        }
+    }
+    return false;
 }
 
 bool PBFTEngine::getNodeIDByIndex(h512& nodeID, const IDXTYPE& idx) const
@@ -402,10 +450,11 @@ bool PBFTEngine::broadcastCommitReq(PrepareReq const& req)
 {
     CommitReq commit_req(req, m_keyPair, nodeIdx());
     bytes commit_req_data;
+    m_reqCache->collectCommitReqList(commit_req, minValidNodes());
+    PBFTENGINE_LOG(DEBUG) << LOG_DESC("collectCommitReqList finished")
+                          << LOG_KV("collectSize", commit_req.m_collect_list.size());
     commit_req.encode(commit_req_data);
     bool succ = broadcastMsg(CommitReqPacket, commit_req.uniqueKey(), ref(commit_req_data));
-    if (succ)
-        m_reqCache->addCommitReq(commit_req);
     return succ;
 }
 
@@ -991,15 +1040,26 @@ bool PBFTEngine::execPrepareAndGenerateSignMsg(
     PrepareReq sign_prepare(_prepareReq, workingSealing, m_keyPair);
     m_execContextForAsyncReset.push_back(m_reqCache->prepareCache().p_execContext);
     m_reqCache->addPrepareReq(sign_prepare);
-    PBFTENGINE_LOG(DEBUG) << LOG_DESC("handlePrepareMsg: add prepare cache and broadcastSignReq")
+    PBFTENGINE_LOG(DEBUG) << LOG_DESC("handlePrepareMsg: add prepare cache and sendSignReq2Leader")
                           << LOG_KV("reqNum", sign_prepare.height)
                           << LOG_KV("hash", sign_prepare.block_hash.abridged())
                           << LOG_KV("nodeIdx", nodeIdx())
                           << LOG_KV("addPrepareTime", utcTime() - startT)
                           << LOG_KV("myNode", m_keyPair.pub().abridged());
 
-    /// broadcast the re-generated signReq(add the signReq to cache)
-    broadcastSignReq(sign_prepare);
+    bool leaderFlag = (nodeIdx() == getLeader().second);
+    if (!leaderFlag && !m_isSignEnough)
+    {
+        // send re-generate PrepareReq to leader
+        sendSignReq2Leader(sign_prepare);
+    }
+    // leader 应该在这个时候把自己的signreq加入到cache
+    if (leaderFlag)
+    {
+        SignReq sign_req(sign_prepare, m_keyPair, nodeIdx());
+        m_reqCache->addSignReq(sign_req);
+    }
+
 
     checkAndCommit();
     PBFTENGINE_LOG(INFO) << LOG_DESC("handlePrepareMsg Succ")
@@ -1010,7 +1070,12 @@ bool PBFTEngine::execPrepareAndGenerateSignMsg(
 
 void PBFTEngine::checkAndCommit()
 {
-    size_t sign_size = m_reqCache->getSigCacheSize(m_reqCache->prepareCache().block_hash);
+    size_t sign_size;
+    bool leaderFlag = (nodeIdx() == getLeader().second);
+    if (leaderFlag)
+        sign_size = m_reqCache->getSigCacheSize(m_reqCache->prepareCache().block_hash);
+    else
+        sign_size = m_isSignEnough ? minValidNodes() : 0;
     /// must be equal to minValidNodes:in case of callback checkAndCommit repeatly in a round of
     /// PBFT consensus
     if (sign_size == minValidNodes())
@@ -1042,15 +1107,21 @@ void PBFTEngine::checkAndCommit()
         m_threadPool->enqueue(
             [=]() { backupMsg(c_backupKeyCommitted, m_reqCache->committedPrepareCache()); });
 
-        PBFTENGINE_LOG(DEBUG) << LOG_DESC("checkAndCommit: broadcastCommitReq")
-                              << LOG_KV("prepareHeight", m_reqCache->prepareCache().height)
-                              << LOG_KV("hash", m_reqCache->prepareCache().block_hash.abridged())
-                              << LOG_KV("nodeIdx", nodeIdx())
-                              << LOG_KV("myNode", m_keyPair.pub().abridged());
 
-        if (!broadcastCommitReq(m_reqCache->prepareCache()))
+        if (leaderFlag)
         {
-            PBFTENGINE_LOG(WARNING) << LOG_DESC("checkAndCommit: broadcastCommitReq failed");
+            PBFTENGINE_LOG(DEBUG) << LOG_DESC("checkAndCommit: broadcastCommitReq")
+                                  << LOG_KV("prepareHeight", m_reqCache->prepareCache().height)
+                                  << LOG_KV(
+                                         "hash", m_reqCache->prepareCache().block_hash.abridged())
+                                  << LOG_KV("nodeIdx", nodeIdx())
+                                  << LOG_KV("myNode", m_keyPair.pub().abridged());
+            if (!broadcastCommitReq(m_reqCache->prepareCache()))
+            {
+                PBFTENGINE_LOG(WARNING) << LOG_DESC("checkAndCommit: broadcastCommitReq failed");
+            }
+            CommitReq commit_req(m_reqCache->prepareCache(), m_keyPair, nodeIdx());
+            m_reqCache->addCommitReq(commit_req);
         }
 
         m_timeManager.m_lastSignTime = utcTime();
@@ -1064,8 +1135,19 @@ void PBFTEngine::checkAndSave()
 {
     auto start_commit_time = utcTime();
     auto record_time = utcTime();
-    size_t sign_size = m_reqCache->getSigCacheSize(m_reqCache->prepareCache().block_hash);
-    size_t commit_size = m_reqCache->getCommitCacheSize(m_reqCache->prepareCache().block_hash);
+    size_t sign_size;
+    size_t commit_size;
+    bool leaderFlag = (nodeIdx() == getLeader().second);
+    if (leaderFlag)
+    {
+        sign_size = m_reqCache->getSigCacheSize(m_reqCache->prepareCache().block_hash);
+        commit_size = m_reqCache->getCommitCacheSize(m_reqCache->prepareCache().block_hash);
+    }
+    else
+    {
+        sign_size = m_isSignEnough ? minValidNodes() : 0;
+        commit_size = m_isCommitEnough ? minValidNodes() : 0;
+    }
     if (sign_size >= minValidNodes() && commit_size >= minValidNodes())
     {
         PBFTENGINE_LOG(INFO) << LOG_DESC("checkAndSave: CommitReq enough")
@@ -1086,19 +1168,46 @@ void PBFTEngine::checkAndSave()
                                   << LOG_KV("myNode", m_keyPair.pub().abridged());
             return;
         }
+        if (leaderFlag)
+        {
+            if (!broadcastCommitReq(m_reqCache->prepareCache()))
+            {
+                PBFTENGINE_LOG(WARNING) << LOG_DESC("checkAndSave: broadcastCommitReq failed");
+            }
+        }
+
         /// add sign-list into the block header
         if (m_reqCache->prepareCache().height > m_highestBlock.number())
         {
             /// Block block(m_reqCache->prepareCache().block);
             std::shared_ptr<dev::eth::Block> p_block = m_reqCache->prepareCache().pBlock;
-            m_reqCache->generateAndSetSigList(*p_block, minValidNodes());
+            bool signListFlag = leaderFlag ?
+                                    m_reqCache->generateAndSetSigList(*p_block, minValidNodes()) :
+                                    m_reqCache->commitAndSetSigList(*p_block, minValidNodes());
+
             auto genSig_time_cost = utcTime() - record_time;
             record_time = utcTime();
             /// callback block chain to commit block
-            CommitResult ret = m_blockChain->commitBlock(p_block,
-                std::shared_ptr<ExecutiveContext>(m_reqCache->prepareCache().p_execContext));
+            CommitResult ret;
+
+
+            if (!signListFlag)
+            {
+                PBFTENGINE_LOG(ERROR) << LOG_DESC("sigList generate failed")
+                                      << LOG_KV("sigList size", p_block->sigList()->size())
+                                      << LOG_KV("isLeader", leaderFlag);
+                ret = CommitResult::ERROR_COMMITTING;
+            }
+            else
+            {
+                ret = m_blockChain->commitBlock(p_block,
+                    std::shared_ptr<ExecutiveContext>(m_reqCache->prepareCache().p_execContext));
+            }
             auto commitBlock_time_cost = utcTime() - record_time;
             record_time = utcTime();
+
+            m_isSignEnough.store(false);
+            m_isCommitEnough.store(false);
 
             /// drop handled transactions
             if (ret == CommitResult::OK)
@@ -1232,7 +1341,31 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
     }
     m_reqCache->addSignReq(sign_req);
 
-    checkAndCommit();
+    if (nodeIdx() == getLeader().second)
+    {
+        checkAndCommit();
+    }
+    else
+    {
+        if (sign_req.idx != getLeader().second)
+            return false;
+        if (!m_isSignEnough)
+        {
+            if (isCollectSignEnough(sign_req))
+            {
+                sendCommitReq2Leader(m_reqCache->prepareCache());
+                m_isSignEnough.store(true);
+                checkAndCommit();
+            }
+            else
+            {
+                PBFTENGINE_LOG(INFO)
+                    << LOG_DESC("handleSignMsg faild") << LOG_KV("isCollectSignEnough", false);
+                return false;
+            }
+        }
+    }
+
     PBFTENGINE_LOG(INFO) << LOG_DESC("handleSignMsg Succ") << LOG_KV("Timecost", 1000 * t.elapsed())
                          << LOG_KV("INFO", oss.str());
     return true;
@@ -1309,7 +1442,30 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
         return true;
     }
     m_reqCache->addCommitReq(commit_req);
-    checkAndSave();
+    if (nodeIdx() == getLeader().second)
+    {
+        checkAndSave();
+    }
+    else
+    {
+        if (commit_req.idx != getLeader().second)
+            return false;
+        if (!m_isCommitEnough)
+        {
+            if (isCollectCommitEnough(commit_req))
+            {
+                m_reqCache->setCommitCollectCache(commit_req.m_collect_list);
+                m_isCommitEnough.store(true);
+                checkAndSave();
+            }
+            else
+            {
+                PBFTENGINE_LOG(INFO)
+                    << LOG_DESC("handleCommitMsg faild") << LOG_KV("isColCommitEnough", false);
+                return false;
+            }
+        }
+    }
     PBFTENGINE_LOG(INFO) << LOG_DESC("handleCommitMsg Succ") << LOG_KV("INFO", oss.str())
                          << LOG_KV("Timecost", 1000 * t.elapsed());
     return true;
@@ -1497,6 +1653,8 @@ void PBFTEngine::checkAndChangeView()
         m_timeManager.m_lastConsensusTime = utcTime();
         m_view = m_toView.load();
         m_notifyNextLeaderSeal = false;
+        m_isCommitEnough = false;
+        m_isSignEnough = false;
         m_reqCache->triggerViewChange(m_view);
         m_blockSync->noteSealingBlockNumber(m_blockChain->number());
     }
@@ -1592,40 +1750,35 @@ void PBFTEngine::handleMsg(PBFTMsgPacket::Ptr pbftMsg)
     bool succ = false;
     switch (pbftMsg->packet_id)
     {
-    case PrepareReqPacket:
-    {
+    case PrepareReqPacket: {
         PrepareReq prepare_req;
         succ = handlePrepareMsg(prepare_req, *pbftMsg);
         key = prepare_req.uniqueKey();
         pbft_msg = prepare_req;
         break;
     }
-    case SignReqPacket:
-    {
+    case SignReqPacket: {
         SignReq req;
         succ = handleSignMsg(req, *pbftMsg);
         key = req.uniqueKey();
         pbft_msg = req;
         break;
     }
-    case CommitReqPacket:
-    {
+    case CommitReqPacket: {
         CommitReq req;
         succ = handleCommitMsg(req, *pbftMsg);
         key = req.uniqueKey();
         pbft_msg = req;
         break;
     }
-    case ViewChangeReqPacket:
-    {
+    case ViewChangeReqPacket: {
         ViewChangeReq req;
         succ = handleViewChangeMsg(req, *pbftMsg);
         key = req.uniqueKey();
         pbft_msg = req;
         break;
     }
-    default:
-    {
+    default: {
         PBFTENGINE_LOG(DEBUG) << LOG_DESC("handleMsg:  Err pbft message")
                               << LOG_KV("from", pbftMsg->node_idx) << LOG_KV("nodeIdx", nodeIdx())
                               << LOG_KV("myNode", m_keyPair.pub().abridged());

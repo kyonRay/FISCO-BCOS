@@ -78,6 +78,9 @@ public:
         return getSizeFromCache(toView, m_recvViewChangeReq);
     }
 
+    bool collectSigReqList(SignReq& req, IDXTYPE const& minSigSize);
+    bool collectCommitReqList(CommitReq& req, IDXTYPE const& minSigSize);
+
     template <typename T, typename S>
     inline size_t getSizeFromCache(T const& key, S& cache) const
     {
@@ -214,6 +217,12 @@ public:
     }
     /// obtain the sig-list from m_commitCache, and append the sig-list to given block
     bool generateAndSetSigList(dev::eth::Block& block, const IDXTYPE& minSigSize);
+    bool commitAndSetSigList(dev::eth::Block& block, IDXTYPE const& minSigSize);
+
+    inline void setCommitCollectCache(std::vector<std::pair<u256, Signature>>& _l)
+    {
+        m_commitCollectCache = _l;
+    }
     ///  determine can trigger viewchange or not
     bool canTriggerViewChange(VIEWTYPE& minView, IDXTYPE const& minInvalidNodeNum,
         VIEWTYPE const& toView, dev::eth::BlockHeader const& highestBlock,
@@ -227,6 +236,7 @@ public:
         m_prepareCache.clear();
         m_signCache.clear();
         m_commitCache.clear();
+        m_commitCollectCache.clear();
         m_futurePrepareCache.clear();
         removeInvalidViewChange(curView);
     }
@@ -255,6 +265,7 @@ public:
         m_prepareCache.clear();
         m_signCache.clear();
         m_recvViewChangeReq.clear();
+        m_commitCollectCache.clear();
     }
 
     virtual void removeInvalidFutureCache(int64_t const& _highestBlockNumber);
@@ -367,6 +378,9 @@ protected:
     std::unordered_map<uint64_t, std::shared_ptr<PrepareReq>> m_futurePrepareCache;
 
     mutable SharedMutex x_rawPrepareCache;
+
+    /// 对于非leader节点的commit cache
+    std::vector<std::pair<u256, Signature>> m_commitCollectCache;
 };
 }  // namespace consensus
 }  // namespace dev

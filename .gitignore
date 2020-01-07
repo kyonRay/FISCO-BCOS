@@ -49,3 +49,8 @@ deps/**
 
 # macOS
 .DS_Store
+
+tools/console.tar.gz
+nodes/
+console/
+pbftMsgBackup
