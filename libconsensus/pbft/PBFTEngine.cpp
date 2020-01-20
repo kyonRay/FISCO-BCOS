@@ -923,11 +923,12 @@ bool PBFTEngine::handlePrepareMsg(PrepareReq const& prepareReq, std::string cons
                           << LOG_KV("reqNum", sign_prepare.height)
                           << LOG_KV("hash", sign_prepare.block_hash.abridged())
                           << LOG_KV("nodeIdx", nodeIdx())
-                          << LOG_KV("myNode", m_keyPair.pub().abridged());
+                          << LOG_KV("myNode", m_keyPair.pub().abridged())
+                          << LOG_KV("isSignEnough", m_isSignEnough);
 
     // not a leader
     bool leaderFlag = (nodeIdx() == getLeader().second);
-    if (!leaderFlag && !m_isSignEnough)
+    if (!leaderFlag)
     {
         // send re-generate PrepareReq to leader
         if (!sendSignReq2Leader(sign_prepare))
@@ -978,17 +979,10 @@ void PBFTEngine::checkAndCommit()
             return;
         }
         m_reqCache->updateCommittedPrepare();
-        /// update and backup the commit cache
-        PBFTENGINE_LOG(INFO) << LOG_DESC("checkAndCommit: backup/updateCommittedPrepare")
-                             << LOG_KV("reqNum", m_reqCache->committedPrepareCache().height)
-                             << LOG_KV("hash",
-                                    m_reqCache->committedPrepareCache().block_hash.abridged())
-                             << LOG_KV("nodeIdx", nodeIdx())
-                             << LOG_KV("myNode", m_keyPair.pub().abridged());
-        backupMsg(c_backupKeyCommitted, m_reqCache->committedPrepareCache());
-
+        
         if (leaderFlag)
         {
+            m_isSignEnough.store(true);
             PBFTENGINE_LOG(DEBUG) << LOG_DESC("checkAndCommit: broadcastSignReq")
                                   << LOG_KV("prepareHeight", m_reqCache->prepareCache().height)
                                   << LOG_KV(
@@ -1003,6 +997,14 @@ void PBFTEngine::checkAndCommit()
             CommitReq commit_req(m_reqCache->prepareCache(), m_keyPair, nodeIdx());
             m_reqCache->addCommitReq(commit_req);
         }
+        /// update and backup the commit cache
+        PBFTENGINE_LOG(INFO) << LOG_DESC("checkAndCommit: backup/updateCommittedPrepare")
+                             << LOG_KV("reqNum", m_reqCache->committedPrepareCache().height)
+                             << LOG_KV("hash",
+                                    m_reqCache->committedPrepareCache().block_hash.abridged())
+                             << LOG_KV("nodeIdx", nodeIdx())
+                             << LOG_KV("myNode", m_keyPair.pub().abridged());
+        backupMsg(c_backupKeyCommitted, m_reqCache->committedPrepareCache());
         m_timeManager.m_lastSignTime = utcTime();
         checkAndSave();
     }
@@ -1049,6 +1051,7 @@ void PBFTEngine::checkAndSave()
         }
         if (leaderFlag)
         {
+            m_isCommitEnough.store(true);
             if (!broadcastCommitReq(m_reqCache->prepareCache(), true))
             {
                 PBFTENGINE_LOG(WARNING) << LOG_DESC("checkAndSave: broadcastCommitReq failed");
@@ -1169,6 +1172,8 @@ void PBFTEngine::reportBlockWithoutLock(Block const& block)
             m_onCommitBlock(block.blockHeader().number(), block.getTransactionSize(),
                 m_timeManager.m_changeCycle);
         }
+        m_isCommitEnough=false;
+        m_isSignEnough=false;
         m_reqCache->delCache(m_highestBlock.hash());
         PBFTENGINE_LOG(INFO) << LOG_DESC("^^^^^^^^Report") << LOG_KV("num", m_highestBlock.number())
                              << LOG_KV("sealerIdx", m_highestBlock.sealer())
@@ -1273,6 +1278,12 @@ CheckResult PBFTEngine::isValidSignReq(SignReq const& req, std::ostringstream& o
                               << LOG_KV("INFO", oss.str());
         return CheckResult::INVALID;
     }
+    if (m_isSignEnough)
+    {
+        PBFTENGINE_LOG(TRACE) << LOG_DESC("Sign requests have been collected")
+                              << LOG_KV("INFO", oss.str());
+        return CheckResult::INVALID;
+    }
     CheckResult result = checkReq(req, oss);
     /// to ensure that the collected signature size is equal to minValidNodes
     /// so that checkAndCommit can be called, and the committed request backup can be stored
@@ -1280,7 +1291,7 @@ CheckResult PBFTEngine::isValidSignReq(SignReq const& req, std::ostringstream& o
         m_reqCache->getSigCacheSize(req.block_hash) < (size_t)(minValidNodes() - 1))
     {
         m_reqCache->addSignReq(req);
-        PBFTENGINE_LOG(INFO) << LOG_DESC("FutureBlock") << LOG_KV("INFO", oss.str());
+        PBFTENGINE_LOG(INFO) << LOG_DESC("FutureBlock") <<LOG_KV("isSignEnough", m_isSignEnough) << LOG_KV("INFO", oss.str());
     }
     return result;
 }

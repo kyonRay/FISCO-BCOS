@@ -422,6 +422,12 @@ protected:
             return CheckResult::INVALID;
         }
 
+        if(m_reqCache->prepareCache().height == -1 || 
+                m_reqCache->prepareCache().view==MAXVIEW)
+        {
+            PBFTENGINE_LOG(DEBUG)<<LOG_DESC("checkReq: m_prepareCache has been cleared");
+            return CheckResult::INVALID;
+        }
         if (m_reqCache->prepareCache().block_hash != req.block_hash)
         {
             PBFTENGINE_LOG(TRACE) << LOG_DESC("checkReq: sign or commit Not exist in prepare cache")
