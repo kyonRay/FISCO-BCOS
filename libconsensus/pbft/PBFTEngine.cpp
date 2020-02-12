@@ -321,7 +321,7 @@ bool PBFTEngine::sendSignReq2Leader(PrepareReq const& req)
     SignReq sign_req(req, m_keyPair, nodeIdx());
     bytes sign_req_data;
     sign_req.encode(sign_req_data);
-    m_reqCache->addSignReq(sign_req);
+    // m_reqCache->addSignReq(sign_req);
     bool succ = sendMsg2Leader(SignReqPacket, ref(sign_req_data));
     return succ;
 }
@@ -332,7 +332,7 @@ bool PBFTEngine::sendCommitReq2Leader(PrepareReq const& req)
     bytes commit_req_data;
     commit_req.encode(commit_req_data);
     bool succ = sendMsg2Leader(CommitReqPacket, ref(commit_req_data));
-    m_reqCache->addCommitReq(commit_req);
+    // m_reqCache->addCommitReq(commit_req);
     return succ;
 }
 
@@ -924,7 +924,7 @@ bool PBFTEngine::handlePrepareMsg(PrepareReq const& prepareReq, std::string cons
                           << LOG_KV("hash", sign_prepare.block_hash.abridged())
                           << LOG_KV("nodeIdx", nodeIdx())
                           << LOG_KV("myNode", m_keyPair.pub().abridged())
-                          << LOG_KV("isSignEnough", m_isSignEnough);
+                          << LOG_KV("isSignEnough", m_isSignEnough.load());
 
     // not a leader
     bool leaderFlag = (nodeIdx() == getLeader().second);
@@ -957,7 +957,7 @@ void PBFTEngine::checkAndCommit()
     if (leaderFlag)
         sign_size = m_reqCache->getSigCacheSize(m_reqCache->prepareCache().block_hash);
     else
-        sign_size = m_isSignEnough ? minValidNodes() : 0;
+        sign_size = (true==m_isSignEnough.load()) ? minValidNodes() : 0;
     /// must be equal to minValidNodes:in case of callback checkAndCommit repeatly in a round of
     /// PBFT consensus
     if (sign_size == minValidNodes())
@@ -1026,8 +1026,8 @@ void PBFTEngine::checkAndSave()
     }
     else
     {
-        sign_size = m_isSignEnough ? minValidNodes() : 0;
-        commit_size = m_isCommitEnough ? minValidNodes() : 0;
+        sign_size = (true == m_isSignEnough.load()) ? minValidNodes() : 0;
+        commit_size = (true == m_isCommitEnough.load()) ? minValidNodes() : 0;
     }
     if (sign_size >= minValidNodes() && commit_size >= minValidNodes())
     {
@@ -1172,8 +1172,8 @@ void PBFTEngine::reportBlockWithoutLock(Block const& block)
             m_onCommitBlock(block.blockHeader().number(), block.getTransactionSize(),
                 m_timeManager.m_changeCycle);
         }
-        m_isCommitEnough=false;
-        m_isSignEnough=false;
+        m_isCommitEnough.store(false);
+        m_isSignEnough.store(false);
         m_reqCache->delCache(m_highestBlock.hash());
         PBFTENGINE_LOG(INFO) << LOG_DESC("^^^^^^^^Report") << LOG_KV("num", m_highestBlock.number())
                              << LOG_KV("sealerIdx", m_highestBlock.sealer())
@@ -1219,13 +1219,13 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
     {
         return true;
     }
-    m_reqCache->addSignReq(sign_req);
     /**
      * 1. 如果是leader，检查签名缓存是否到达2/3
      * 2. 如果不是，检查leader发来的消息是否包含2/3个签名消息，发commit消息
      */
     if (nodeIdx() == getLeader().second)  // is leader
     {
+        m_reqCache->addSignReq(sign_req);
         checkAndCommit();
     }
     else  // not leader
@@ -1234,7 +1234,7 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
         {
             return false;
         }
-        if (!m_isSignEnough)
+        if (false == m_isSignEnough.load())
         {
             if (isColSignEnough(sign_req))
             {
@@ -1278,7 +1278,7 @@ CheckResult PBFTEngine::isValidSignReq(SignReq const& req, std::ostringstream& o
                               << LOG_KV("INFO", oss.str());
         return CheckResult::INVALID;
     }
-    if (m_isSignEnough)
+    if (true == m_isSignEnough.load())
     {
         PBFTENGINE_LOG(TRACE) << LOG_DESC("Sign requests have been collected")
                               << LOG_KV("INFO", oss.str());
@@ -1291,7 +1291,7 @@ CheckResult PBFTEngine::isValidSignReq(SignReq const& req, std::ostringstream& o
         m_reqCache->getSigCacheSize(req.block_hash) < (size_t)(minValidNodes() - 1))
     {
         m_reqCache->addSignReq(req);
-        PBFTENGINE_LOG(INFO) << LOG_DESC("FutureBlock") <<LOG_KV("isSignEnough", m_isSignEnough) << LOG_KV("INFO", oss.str());
+        PBFTENGINE_LOG(INFO) << LOG_DESC("FutureBlock") <<LOG_KV("isSignEnough", m_isSignEnough.load()) << LOG_KV("INFO", oss.str());
     }
     return result;
 }
@@ -1330,10 +1330,10 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
     {
         return true;
     }
-    m_reqCache->addCommitReq(commit_req);
 
     if (nodeIdx() == getLeader().second)  // is leader
     {
+        m_reqCache->addCommitReq(commit_req);
         checkAndSave();
     }
     else  // is not leader
@@ -1342,7 +1342,7 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
         {
             return false;
         }
-        if (!m_isCommitEnough)
+        if (false == m_isCommitEnough.load())
         {
             if (isColCommitEnough(commit_req))
             {
@@ -1546,8 +1546,8 @@ void PBFTEngine::checkAndChangeView()
         m_timeManager.m_lastConsensusTime = utcTime();
         m_view = m_toView.load();
         m_notifyNextLeaderSeal = false;
-        m_isCommitEnough = false;
-        m_isSignEnough = false;
+        m_isCommitEnough.store(false);
+        m_isSignEnough.store(false);
         m_reqCache->triggerViewChange(m_view);
         m_blockSync->noteSealingBlockNumber(m_blockChain->number());
     }
