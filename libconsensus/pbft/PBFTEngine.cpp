@@ -321,7 +321,7 @@ bool PBFTEngine::sendSignReq2Leader(PrepareReq const& req)
     SignReq sign_req(req, m_keyPair, nodeIdx());
     bytes sign_req_data;
     sign_req.encode(sign_req_data);
-    // m_reqCache->addSignReq(sign_req);
+    m_reqCache->addSignReq(sign_req);
     bool succ = sendMsg2Leader(SignReqPacket, ref(sign_req_data));
     return succ;
 }
@@ -331,8 +331,8 @@ bool PBFTEngine::sendCommitReq2Leader(PrepareReq const& req)
     CommitReq commit_req(req, m_keyPair, nodeIdx());
     bytes commit_req_data;
     commit_req.encode(commit_req_data);
+    m_reqCache->addCommitReq(commit_req);
     bool succ = sendMsg2Leader(CommitReqPacket, ref(commit_req_data));
-    // m_reqCache->addCommitReq(commit_req);
     return succ;
 }
 
@@ -353,6 +353,7 @@ bool PBFTEngine::sendMsg2Leader(unsigned const& packetType, bytesConstRef data, 
                 session.nodeID(), transDataToMessage(data, packetType, ttl), nullptr);
             PBFTENGINE_LOG(DEBUG) << LOG_DESC("sendMsg2Leader") << LOG_KV("packetType", packetType)
                                   << LOG_KV("leaderId", leaderID.abridged())
+                                  << LOG_KV("leaderNode", getLeader().second)
                                   << LOG_KV("remote_endpoint", session.nodeIPEndpoint.name())
                                   << LOG_KV("nodeIdx", nodeIdx())
                                   << LOG_KV("myNode", m_keyPair.pub().abridged());
@@ -1223,9 +1224,9 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
      * 1. 如果是leader，检查签名缓存是否到达2/3
      * 2. 如果不是，检查leader发来的消息是否包含2/3个签名消息，发commit消息
      */
+    m_reqCache->addSignReq(sign_req);
     if (nodeIdx() == getLeader().second)  // is leader
     {
-        m_reqCache->addSignReq(sign_req);
         checkAndCommit();
     }
     else  // not leader
@@ -1250,7 +1251,7 @@ bool PBFTEngine::handleSignMsg(SignReq& sign_req, PBFTMsgPacket const& pbftMsg)
             }
         }
     }
-    PBFTENGINE_LOG(INFO) << LOG_DESC("handleSignMsg Succ") << LOG_KV("Timecost", 1000 * t.elapsed())
+    PBFTENGINE_LOG(INFO) << LOG_DESC("handleSignMsg Succ") << LOG_KV("packNum",sign_req.m_collect_list.size()) << LOG_KV("Timecost", 1000 * t.elapsed())
                          << LOG_KV("INFO", oss.str());
     return true;
 }
@@ -1330,10 +1331,10 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
     {
         return true;
     }
-
+    m_reqCache->addCommitReq(commit_req);
+    
     if (nodeIdx() == getLeader().second)  // is leader
     {
-        m_reqCache->addCommitReq(commit_req);
         checkAndSave();
     }
     else  // is not leader
@@ -1359,7 +1360,7 @@ bool PBFTEngine::handleCommitMsg(CommitReq& commit_req, PBFTMsgPacket const& pbf
         }
     }
 
-    PBFTENGINE_LOG(INFO) << LOG_DESC("handleCommitMsg Succ") << LOG_KV("INFO", oss.str())
+    PBFTENGINE_LOG(INFO) << LOG_DESC("handleCommitMsg Succ") <<LOG_KV("packNum",commit_req.m_collect_list.size())<< LOG_KV("INFO", oss.str())
                          << LOG_KV("Timecost", 1000 * t.elapsed());
     return true;
 }
