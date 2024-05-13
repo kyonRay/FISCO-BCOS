@@ -129,9 +129,8 @@ public:
         bcos::protocol::BlockNumber _batchId, bcos::crypto::HashType const& _batchHash,
         bool _sealFlag) override;
 
-    bcos::protocol::TransactionStatus verifyAndSubmitTransaction(
-        protocol::Transaction::Ptr transaction, protocol::TxSubmitCallback txSubmitCallback,
-        bool checkPoolLimit, bool lock);
+    bcos::txpool::TxCheckResult verifyAndSubmitTransaction(protocol::Transaction::Ptr transaction,
+        protocol::TxSubmitCallback txSubmitCallback, bool checkPoolLimit, bool lock);
 
 protected:
     bcos::protocol::TransactionStatus insertWithoutLock(

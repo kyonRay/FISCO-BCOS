@@ -41,11 +41,9 @@ public:
     {}
     ~TxValidator() override = default;
 
-    bcos::protocol::TransactionStatus verify(bcos::protocol::Transaction::ConstPtr _tx) override;
-    bcos::protocol::TransactionStatus checkLedgerNonceAndBlockLimit(
-        bcos::protocol::Transaction::ConstPtr _tx) override;
-    bcos::protocol::TransactionStatus checkTxpoolNonce(
-        bcos::protocol::Transaction::ConstPtr _tx) override;
+    TxCheckResult verify(bcos::protocol::Transaction::ConstPtr _tx) override;
+    TxCheckResult checkLedgerNonceAndBlockLimit(bcos::protocol::Transaction::ConstPtr _tx) override;
+    TxCheckResult checkTxpoolNonce(bcos::protocol::Transaction::ConstPtr _tx) override;
 
     LedgerNonceChecker::Ptr ledgerNonceChecker() override { return m_ledgerNonceChecker; }
     void setLedgerNonceChecker(LedgerNonceChecker::Ptr _ledgerNonceChecker) override

@@ -318,6 +318,15 @@ void TransactionSync::verifyFetchedTxs(Error::Ptr _error, NodeIDPtr _nodeID, byt
                               "propIndex", (_verifiedProposal && _verifiedProposal->blockHeader()) ?
                                                _verifiedProposal->blockHeader()->number() :
                                                -1);
+        if (c_fileLogLevel == DEBUG)
+        {
+            std::stringstream ss;
+            for (const auto& txHash : *_missedTxs)
+            {
+                ss << txHash.hex() << ",";
+            }
+            SYNC_LOG(DEBUG) << LOG_DESC("missedTxs") << LOG_KV("missedTxs", ss.str());
+        }
         _onVerifyFinished(_error, false);
         return;
     }

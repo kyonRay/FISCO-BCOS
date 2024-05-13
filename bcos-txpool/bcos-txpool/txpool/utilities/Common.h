@@ -33,4 +33,20 @@ static constexpr const uint64_t MAX_TRAVERSE_TXS_COUNT = 10000;
 static constexpr const size_t MAX_RETRY_NOTIFY_TIME = 3;
 static constexpr const size_t DEFAULT_POOL_LIMIT = 15000;
 static constexpr const int64_t DEFAULT_BLOCK_LIMIT = 600;
+
+using ConflictValue =
+    std::variant<std::monostate, bcos::protocol::BlockNumber, bcos::crypto::HashType>;
+using TxCheckResult = std::tuple<bcos::protocol::TransactionStatus, ConflictValue>;
+inline std::string getConflictValue(ConflictValue const& _h)
+{
+    if (std::holds_alternative<bcos::protocol::BlockNumber>(_h))
+    {
+        return std::to_string(std::get<bcos::protocol::BlockNumber>(_h));
+    }
+    else if (std::holds_alternative<bcos::crypto::HashType>(_h))
+    {
+        return std::get<bcos::crypto::HashType>(_h).hex();
+    }
+    return {};
+}
 }  // namespace bcos::txpool

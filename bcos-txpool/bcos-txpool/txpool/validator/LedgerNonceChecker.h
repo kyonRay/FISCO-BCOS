@@ -28,7 +28,7 @@ class LedgerNonceChecker : public TxPoolNonceChecker
 {
 public:
     LedgerNonceChecker(
-        std::shared_ptr<std::map<int64_t, bcos::protocol::NonceListPtr> > _initialNonces,
+        std::shared_ptr<std::map<int64_t, bcos::protocol::NonceListPtr>> _initialNonces,
         bcos::protocol::BlockNumber _blockNumber, int64_t _blockLimit, bool _checkBlockLimit)
       : TxPoolNonceChecker(),
         m_blockNumber(_blockNumber),
@@ -40,7 +40,7 @@ public:
             initNonceCache(std::move(_initialNonces));
         }
     }
-    bcos::protocol::TransactionStatus checkNonce(
+    TxCheckResult checkNonce(
         bcos::protocol::Transaction::ConstPtr _tx, bool _shouldUpdate = false) override;
 
     void batchInsert(bcos::protocol::BlockNumber _batchId,
@@ -50,7 +50,7 @@ protected:
     virtual bcos::protocol::TransactionStatus checkBlockLimit(
         bcos::protocol::Transaction::ConstPtr _tx);
     void initNonceCache(
-        std::shared_ptr<std::map<int64_t, bcos::protocol::NonceListPtr> > _initialNonces);
+        std::shared_ptr<std::map<int64_t, bcos::protocol::NonceListPtr>> _initialNonces);
 
 private:
     std::atomic<bcos::protocol::BlockNumber> m_blockNumber = {0};

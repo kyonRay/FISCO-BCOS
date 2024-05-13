@@ -30,7 +30,7 @@ class TxPoolNonceChecker : public NonceCheckerInterface
 {
 public:
     TxPoolNonceChecker() : m_nonces(256){};
-    bcos::protocol::TransactionStatus checkNonce(
+    TxCheckResult checkNonce(
         bcos::protocol::Transaction::ConstPtr _tx, bool _shouldUpdate = false) override;
     void batchInsert(bcos::protocol::BlockNumber _batchId,
         bcos::protocol::NonceListPtr const& _nonceList) override;
@@ -39,14 +39,16 @@ public:
         std::hash<bcos::protocol::NonceType>> const& _nonceList) override;
     bool exists(bcos::protocol::NonceType const& _nonce) override;
 
-    void insert(bcos::protocol::NonceType const& _nonce) override;
+    void insert(
+        bcos::protocol::NonceType const& _nonce, bcos::crypto::HashType const& _hash) override;
 
 protected:
     void remove(bcos::protocol::NonceType const& _nonce) override;
 
-    using NonceSet =
-        bcos::BucketSet<bcos::protocol::NonceType, std::hash<bcos::protocol::NonceType>>;
-    NonceSet m_nonces;
+    using NonceMap = bcos::BucketMap<bcos::protocol::NonceType,
+        std::variant<std::monostate, bcos::protocol::BlockNumber, bcos::crypto::HashType>,
+        std::hash<bcos::protocol::NonceType>>;
+    NonceMap m_nonces;
     // tbb::concurrent_hash_map<bcos::protocol::NonceType, std::monostate> m_nonces;
 };
 }  // namespace bcos::txpool

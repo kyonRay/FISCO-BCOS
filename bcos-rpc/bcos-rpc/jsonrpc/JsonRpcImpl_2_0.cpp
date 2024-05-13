@@ -470,10 +470,11 @@ void JsonRpcImpl_2_0::sendTransaction(std::string_view groupID, std::string_view
                 bcos::ref(transactionData), false, true);
             transaction->forceSender({});  // must clear sender here for future verify
 
-            if (c_fileLogLevel <= TRACE)
+            if (c_fileLogLevel <= DEBUG) [[unlikely]]
             {
-                RPC_IMPL_LOG(TRACE) << LOG_DESC("sendTransaction") << LOG_KV("group", groupID)
-                                    << LOG_KV("node", nodeName) << LOG_KV("isWasm", isWasm);
+                RPC_IMPL_LOG(DEBUG)
+                    << LOG_DESC("sendTransaction") << LOG_KV("group", groupID)
+                    << LOG_KV("node", nodeName) << LOG_KV("txHash", transaction->hash());
             }
 
             auto start = utcSteadyTime();

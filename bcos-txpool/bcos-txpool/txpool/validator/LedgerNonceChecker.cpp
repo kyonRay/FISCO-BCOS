@@ -24,7 +24,7 @@ using namespace bcos::protocol;
 using namespace bcos::txpool;
 
 void LedgerNonceChecker::initNonceCache(
-    std::shared_ptr<std::map<int64_t, bcos::protocol::NonceListPtr> > _initialNonces)
+    std::shared_ptr<std::map<int64_t, bcos::protocol::NonceListPtr>> _initialNonces)
 {
     for (auto const& it : *_initialNonces)
     {
@@ -33,19 +33,19 @@ void LedgerNonceChecker::initNonceCache(
     }
 }
 
-TransactionStatus LedgerNonceChecker::checkNonce(Transaction::ConstPtr _tx, bool _shouldUpdate)
+TxCheckResult LedgerNonceChecker::checkNonce(Transaction::ConstPtr _tx, bool _shouldUpdate)
 {
-    // check nonce
-    auto status = TxPoolNonceChecker::checkNonce(_tx, _shouldUpdate);
-    if (status != TransactionStatus::None)
+    // check nonce in ledger, use TxPoolNonceChecker method code
+    if (auto&& [status, value] = TxPoolNonceChecker::checkNonce(_tx, _shouldUpdate);
+        status != TransactionStatus::None)
     {
-        return status;
+        return {status, std::move(value)};
     }
     if (m_checkBlockLimit)
     {  // check blockLimit
-        return checkBlockLimit(_tx);
+        return {checkBlockLimit(_tx), std::monostate{}};
     }
-    return TransactionStatus::None;
+    return {TransactionStatus::None, std::monostate{}};
 }
 
 TransactionStatus LedgerNonceChecker::checkBlockLimit(bcos::protocol::Transaction::ConstPtr _tx)

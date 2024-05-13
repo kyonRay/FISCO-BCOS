@@ -190,6 +190,11 @@ void FrontServiceInitializer::initMsgHandlers(bcos::consensus::ConsensusInterfac
                 [](decltype(txpool) txpool, decltype(transaction) transaction) -> task::Task<void> {
                     try
                     {
+                        if (c_fileLogLevel == DEBUG)
+                        {
+                            TXPOOL_LOG(DEBUG) << "Receive transaction from SYNC_PUSH_TRANSACTION"
+                                              << LOG_KV("nodeID", transaction->hash().hex());
+                        }
                         [[maybe_unused]] auto submitResult =
                             co_await txpool->submitTransaction(std::move(transaction));
                     }

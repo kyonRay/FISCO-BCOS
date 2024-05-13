@@ -20,8 +20,10 @@
  */
 #include "bcos-txpool/txpool/storage/MemoryStorage.h"
 #include "bcos-utilities/Common.h"
+#include <bcos-txpool/txpool/utilities/Common.h>
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/parallel_for_each.h>
+#include <servant/RemoteLogger.h>
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_invoke.h>
 #include <boost/exception/diagnostic_information.hpp>
@@ -101,7 +103,7 @@ task::Task<protocol::TransactionSubmitResult::Ptr> MemoryStorage::submitTransact
         {
             try
             {
-                auto result = m_self->verifyAndSubmitTransaction(
+                auto&& [result, value] = m_self->verifyAndSubmitTransaction(
                     std::move(m_transaction),
                     [this, m_handle = handle](Error::Ptr error,
                         bcos::protocol::TransactionSubmitResult::Ptr result) mutable {
@@ -132,7 +134,9 @@ task::Task<protocol::TransactionSubmitResult::Ptr> MemoryStorage::submitTransact
                     TXPOOL_LOG(DEBUG)
                         << "Submit transaction failed! "
                         << LOG_KV("TxHash", m_transaction ? m_transaction->hash().hex() : "")
-                        << LOG_KV("result", result);
+                        << LOG_KV("result", result) << LOG_KV("conflict", getConflictValue(value))
+                        << LOG_KV("cfNonce", m_transaction ? m_transaction->nonce() : "");
+
                     m_submitResult.emplace<Error::Ptr>(
                         BCOS_ERROR_PTR((int32_t)result, bcos::protocol::toString(result)));
                     handle.resume();
@@ -222,10 +226,10 @@ TransactionStatus MemoryStorage::enforceSubmitTransaction(Transaction::Ptr _tx)
     {
         // check txpool nonce
         // check ledger tx
-        auto result = m_config->txValidator()->checkTxpoolNonce(_tx);
+        auto&& [result, value] = m_config->txValidator()->checkTxpoolNonce(_tx);
         if (result == TransactionStatus::None)
         {
-            result = m_config->txValidator()->checkLedgerNonceAndBlockLimit(_tx);
+            std::tie(result, value) = m_config->txValidator()->checkLedgerNonceAndBlockLimit(_tx);
         }
         Transaction::ConstPtr tx = nullptr;
         {
@@ -240,13 +244,23 @@ TransactionStatus MemoryStorage::enforceSubmitTransaction(Transaction::Ptr _tx)
         {
             if (tx)
             {
-                TXPOOL_LOG(WARNING) << LOG_DESC("enforce to seal failed for nonce check failed: ")
-                                    << tx->hash().abridged() << LOG_KV("batchId", tx->batchId())
-                                    << LOG_KV("batchHash", tx->batchHash().abridged())
-                                    << LOG_KV("importBatchId", _tx->batchId())
-                                    << LOG_KV("importBatchHash", _tx->batchHash().abridged());
+                if (tx->hash() != txHash)
+                {
+                    TXPOOL_LOG(WARNING)
+                        << LOG_DESC("enforce to seal failed for nonce check failed: ")
+                        << tx->hash().hexPrefixed() << LOG_KV("batchId", tx->batchId())
+                        << LOG_KV("batchHash", tx->batchHash().abridged())
+                        << LOG_KV("importTxHash", txHash) << LOG_KV("importBatchId", _tx->batchId())
+                        << LOG_KV("importBatchHash", _tx->batchHash().abridged())
+                        << LOG_KV("conflict", getConflictValue(value))
+                        << LOG_KV("cfNonce", _tx->nonce());
+                    return TransactionStatus::NonceCheckFail;
+                }
             }
-            return TransactionStatus::NonceCheckFail;
+            else
+            {
+                return TransactionStatus::NonceCheckFail;
+            }
         }
 
         // tx already in txpool
@@ -311,7 +325,7 @@ TransactionStatus MemoryStorage::enforceSubmitTransaction(Transaction::Ptr _tx)
     return TransactionStatus::None;
 }
 
-TransactionStatus MemoryStorage::verifyAndSubmitTransaction(
+bcos::txpool::TxCheckResult MemoryStorage::verifyAndSubmitTransaction(
     Transaction::Ptr transaction, TxSubmitCallback txSubmitCallback, bool checkPoolLimit, bool lock)
 {
     size_t txsSize = m_txsTable.size();
@@ -321,12 +335,12 @@ TransactionStatus MemoryStorage::verifyAndSubmitTransaction(
     {
         // Note: if rpc is slower than p2p tx sync, we also need to accept this tx and record
         // callback
-        return TransactionStatus::None;
+        return {TransactionStatus::None, std::monostate{}};
     }
 
     if (result != TransactionStatus::None)
     {
-        return result;
+        return {result, std::monostate{}};
     }
 
     // start stat the tps when receive first new tx from the sdk
@@ -338,11 +352,13 @@ TransactionStatus MemoryStorage::verifyAndSubmitTransaction(
     // restricted
     if (checkPoolLimit && txsSize >= m_config->poolLimit())
     {
-        return TransactionStatus::TxPoolIsFull;
+        return {TransactionStatus::TxPoolIsFull, std::monostate{}};
     }
 
     // verify the transaction
-    result = m_config->txValidator()->verify(transaction);
+
+    ConflictValue value;
+    std::tie(result, value) = m_config->txValidator()->verify(transaction);
     m_inRateCollector.update(1, true);
     if (result == TransactionStatus::None)
     {
@@ -360,7 +376,7 @@ TransactionStatus MemoryStorage::verifyAndSubmitTransaction(
         }
     }
 
-    return result;
+    return {result, std::move(value)};
 }
 
 void MemoryStorage::notifyInvalidReceipt(
@@ -735,7 +751,7 @@ void MemoryStorage::batchFetchTxs(Block::Ptr _txsList, Block::Ptr _sysTxsList, s
         // txPool, the txs with duplicated nonce here are already-committed, but have not been
         // dropped
         // check txpool txs, no need to check txpool nonce
-        auto result = m_config->txValidator()->checkLedgerNonceAndBlockLimit(tx);
+        auto [result, _] = m_config->txValidator()->checkLedgerNonceAndBlockLimit(tx);
         if (result == TransactionStatus::NonceCheckFail)
         {
             // in case of the same tx notified more than once
@@ -1191,7 +1207,7 @@ HashListPtr MemoryStorage::getTxsHash(int _limit)
                 return true;
             }
             // check txpool txs, no need to check txpool nonce
-            auto result = m_config->txValidator()->checkLedgerNonceAndBlockLimit(tx);
+            auto [result, _] = m_config->txValidator()->checkLedgerNonceAndBlockLimit(tx);
             if (result != TransactionStatus::None)
             {
                 TxsMap::WriteAccessor::Ptr writeAccessor;
@@ -1272,7 +1288,7 @@ void MemoryStorage::cleanUpExpiredTransactions()
             }
         }
         // check txpool txs, no need to check txpool nonce
-        auto result = m_config->txValidator()->checkLedgerNonceAndBlockLimit(tx);
+        auto [result, _] = m_config->txValidator()->checkLedgerNonceAndBlockLimit(tx);
         // blockLimit expired
         if (result != TransactionStatus::None)
         {
@@ -1313,11 +1329,12 @@ void MemoryStorage::batchImportTxs(TransactionsPtr _txs)
             continue;
         }
         // will check ledger nonce, txpool nonce and blockLimit when import txs
-        auto ret = verifyAndSubmitTransaction(tx, nullptr, false, false);
+        auto&& [ret, value] = verifyAndSubmitTransaction(tx, nullptr, false, false);
         if (ret != TransactionStatus::None)
         {
-            TXPOOL_LOG(TRACE) << LOG_DESC("batchImportTxs failed")
-                              << LOG_KV("tx", tx->hash().abridged()) << LOG_KV("msg", ret);
+            TXPOOL_LOG(TRACE) << LOG_DESC("batchImportTxs failed") << LOG_KV("tx", tx->hash().hex())
+                              << LOG_KV("msg", ret) << LOG_KV("conflict", getConflictValue(value))
+                              << LOG_KV("cfNonce", tx->nonce());
             continue;
         }
         successCount++;

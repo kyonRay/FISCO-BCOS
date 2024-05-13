@@ -30,32 +30,38 @@ bool TxPoolNonceChecker::exists(NonceType const& _nonce)
     return m_nonces.contains(_nonce);
 }
 
-TransactionStatus TxPoolNonceChecker::checkNonce(Transaction::ConstPtr _tx, bool _shouldUpdate)
+TxCheckResult TxPoolNonceChecker::checkNonce(Transaction::ConstPtr _tx, bool _shouldUpdate)
 {
     auto nonce = _tx->nonce();
 
-    if (m_nonces.contains(nonce))
+    NonceMap::ReadAccessor::Ptr readAccessor;
+    if (m_nonces.find<NonceMap::ReadAccessor>(readAccessor, nonce))
     {
-        return TransactionStatus::NonceCheckFail;
+        auto const& value = readAccessor->value();
+        return {TransactionStatus::NonceCheckFail, value};
     }
 
     if (_shouldUpdate)
     {
-        NonceSet::WriteAccessor::Ptr accessor;
-        m_nonces.insert(accessor, std::move(nonce));
+        NonceMap::WriteAccessor::Ptr accessor;
+        m_nonces.insert(accessor, {std::move(nonce), _tx->hash()});
     }
-    return TransactionStatus::None;
+    return {TransactionStatus::None, std::monostate{}};
 }
 
-void TxPoolNonceChecker::insert(NonceType const& _nonce)
+void TxPoolNonceChecker::insert(NonceType const& _nonce, crypto::HashType const& _hash)
 {
-    NonceSet::WriteAccessor::Ptr accessor;
-    m_nonces.insert(accessor, _nonce);
+    NonceMap::WriteAccessor::Ptr accessor;
+    m_nonces.insert(accessor, {_nonce, _hash});
 }
 
-void TxPoolNonceChecker::batchInsert(BlockNumber /*_batchId*/, NonceListPtr const& _nonceList)
+void TxPoolNonceChecker::batchInsert(BlockNumber _batchId, NonceListPtr const& _nonceList)
 {
-    m_nonces.batchInsert(*_nonceList);
+    NonceMap::WriteAccessor::Ptr accessor;
+    for (auto const& nonce : *_nonceList)
+    {
+        m_nonces.insert(accessor, {nonce, _batchId});
+    }
 }
 
 void TxPoolNonceChecker::remove(NonceType const& _nonce)

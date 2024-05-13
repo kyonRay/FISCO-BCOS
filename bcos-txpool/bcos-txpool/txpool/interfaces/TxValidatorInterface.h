@@ -32,11 +32,10 @@ public:
     TxValidatorInterface() = default;
     virtual ~TxValidatorInterface() = default;
 
-    virtual bcos::protocol::TransactionStatus verify(bcos::protocol::Transaction::ConstPtr _tx) = 0;
-    virtual bcos::protocol::TransactionStatus checkLedgerNonceAndBlockLimit(
+    virtual TxCheckResult verify(bcos::protocol::Transaction::ConstPtr _tx) = 0;
+    virtual TxCheckResult checkLedgerNonceAndBlockLimit(
         bcos::protocol::Transaction::ConstPtr _tx) = 0;
-    virtual bcos::protocol::TransactionStatus checkTxpoolNonce(
-        bcos::protocol::Transaction::ConstPtr _tx) = 0;
+    virtual TxCheckResult checkTxpoolNonce(bcos::protocol::Transaction::ConstPtr _tx) = 0;
     virtual LedgerNonceChecker::Ptr ledgerNonceChecker() = 0;
     virtual void setLedgerNonceChecker(LedgerNonceChecker::Ptr _ledgerNonceChecker) = 0;
 };

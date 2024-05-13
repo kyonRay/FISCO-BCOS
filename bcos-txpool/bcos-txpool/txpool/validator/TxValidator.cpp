@@ -24,32 +24,32 @@ using namespace bcos;
 using namespace bcos::protocol;
 using namespace bcos::txpool;
 
-TransactionStatus TxValidator::verify(bcos::protocol::Transaction::ConstPtr _tx)
+TxCheckResult TxValidator::verify(bcos::protocol::Transaction::ConstPtr _tx)
 {
     if (_tx->invalid()) [[unlikely]]
     {
-        return TransactionStatus::InvalidSignature;
+        return {TransactionStatus::InvalidSignature, std::monostate{}};
     }
     // check groupId and chainId
     if (_tx->groupId() != m_groupId) [[unlikely]]
     {
-        return TransactionStatus::InvalidGroupId;
+        return {TransactionStatus::InvalidGroupId, std::monostate{}};
     }
     if (_tx->chainId() != m_chainId) [[unlikely]]
     {
-        return TransactionStatus::InvalidChainId;
+        return {TransactionStatus::InvalidChainId, std::monostate{}};
     }
     // compare with nonces cached in memory, only check nonce in txpool
-    auto status = checkTxpoolNonce(_tx);
+    auto [status, value] = checkTxpoolNonce(_tx);
     if (status != TransactionStatus::None)
     {
-        return status;
+        return {status, std::move(value)};
     }
     // check ledger nonce and block limit
-    status = checkLedgerNonceAndBlockLimit(_tx);
+    std::tie(status, value) = checkLedgerNonceAndBlockLimit(_tx);
     if (status != TransactionStatus::None)
     {
-        return status;
+        return {status, std::move(value)};
     }
     // check signature
     try
@@ -58,34 +58,33 @@ TransactionStatus TxValidator::verify(bcos::protocol::Transaction::ConstPtr _tx)
     }
     catch (...)
     {
-        return TransactionStatus::InvalidSignature;
+        return {TransactionStatus::InvalidSignature, std::monostate{}};
     }
 
     if (isSystemTransaction(_tx))
     {
         _tx->setSystemTx(true);
     }
-    m_txPoolNonceChecker->insert(_tx->nonce());
-    return TransactionStatus::None;
+    m_txPoolNonceChecker->insert(_tx->nonce(), _tx->hash());
+    return {TransactionStatus::None, std::monostate{}};
 }
 
-TransactionStatus TxValidator::checkLedgerNonceAndBlockLimit(
-    bcos::protocol::Transaction::ConstPtr _tx)
+TxCheckResult TxValidator::checkLedgerNonceAndBlockLimit(bcos::protocol::Transaction::ConstPtr _tx)
 {
     // compare with nonces stored on-chain, and check block limit inside
-    auto status = m_ledgerNonceChecker->checkNonce(_tx);
+    auto&& [status, value] = m_ledgerNonceChecker->checkNonce(_tx);
     if (status != TransactionStatus::None)
     {
-        return status;
+        return {status, std::move(value)};
     }
     if (isSystemTransaction(_tx))
     {
         _tx->setSystemTx(true);
     }
-    return TransactionStatus::None;
+    return {TransactionStatus::None, std::monostate{}};
 }
 
-TransactionStatus TxValidator::checkTxpoolNonce(bcos::protocol::Transaction::ConstPtr _tx)
+TxCheckResult TxValidator::checkTxpoolNonce(bcos::protocol::Transaction::ConstPtr _tx)
 {
     return m_txPoolNonceChecker->checkNonce(_tx, false);
 }

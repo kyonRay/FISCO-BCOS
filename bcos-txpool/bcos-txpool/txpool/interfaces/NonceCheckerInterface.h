@@ -22,6 +22,7 @@
 #include <bcos-framework/protocol/ProtocolTypeDef.h>
 #include <bcos-framework/protocol/Transaction.h>
 #include <bcos-protocol/TransactionStatus.h>
+#include <bcos-txpool/txpool/utilities/Common.h>
 #include <tbb/concurrent_unordered_set.h>
 
 #define NONCECHECKER_LOG(LEVEL) BCOS_LOG(LEVEL) << LOG_BADGE("TXPOOL") << LOG_BADGE("NonceChecker")
@@ -35,7 +36,7 @@ public:
     NonceCheckerInterface() = default;
     virtual ~NonceCheckerInterface() = default;
 
-    virtual bcos::protocol::TransactionStatus checkNonce(
+    virtual TxCheckResult checkNonce(
         bcos::protocol::Transaction::ConstPtr _tx, bool _shouldUpdate = false) = 0;
     virtual bool exists(bcos::protocol::NonceType const& _nonce) = 0;
     virtual void batchInsert(
@@ -43,7 +44,8 @@ public:
     virtual void batchRemove(bcos::protocol::NonceList const& _nonceList) = 0;
     virtual void batchRemove(tbb::concurrent_unordered_set<bcos::protocol::NonceType,
         std::hash<bcos::protocol::NonceType>> const& _nonceList) = 0;
-    virtual void insert(bcos::protocol::NonceType const& _nonce) = 0;
+    virtual void insert(
+        bcos::protocol::NonceType const& _nonce, bcos::crypto::HashType const& _hash) = 0;
 
     virtual void remove(bcos::protocol::NonceType const& _nonce) = 0;
 };

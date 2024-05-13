@@ -98,12 +98,14 @@ uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::P
         // append in txpool, in case other peers need it
         auto& txpool = dynamic_cast<txpool::TxPool&>(*_sealerConfig->txpool());
         auto& txpoolStorage = dynamic_cast<txpool::MemoryStorage&>(*txpool.txpoolStorage());
-        auto submitResult = txpoolStorage.verifyAndSubmitTransaction(tx, nullptr, false, true);
+        auto&& [submitResult, value] =
+            txpoolStorage.verifyAndSubmitTransaction(tx, nullptr, false, true);
         if (submitResult != protocol::TransactionStatus::None) [[unlikely]]
         {
             SEAL_LOG(WARNING) << LOG_DESC("generateTransactionForRotating failed for txpool submit")
                               << LOG_KV("nodeIdx", _sealerConfig->consensus()->nodeIndex())
-                              << LOG_KV("submitResult", submitResult);
+                              << LOG_KV("submitResult", submitResult)
+                              << LOG_KV("conflict", txpool::getConflictValue(value));
             return SealBlockResult::FAILED;
         }
 
