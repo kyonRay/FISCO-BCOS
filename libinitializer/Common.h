@@ -25,7 +25,10 @@
 #include <bcos-utilities/DataConvertUtility.h>
 #include <bcos-utilities/Exceptions.h>
 #include <bcos-utilities/FileUtility.h>
+#include <openssl/ec.h>
 #include <openssl/engine.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <openssl/rsa.h>
 #include <boost/filesystem.hpp>
 #include <memory>

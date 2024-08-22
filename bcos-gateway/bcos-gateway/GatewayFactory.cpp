@@ -182,7 +182,7 @@ void GatewayFactory::initSSLContextPubHexHandlerWithoutExtInfo()
         int type = EVP_PKEY_base_id(pKey);
         if (EVP_PKEY_RSA == type || EVP_PKEY_RSA2 == type)
         {
-            RSA* rsa = EVP_PKEY_get0_RSA(pKey);
+            RSA const* rsa = EVP_PKEY_get0_RSA(pKey);
             if (nullptr == rsa)
             {
                 GATEWAY_FACTORY_LOG(ERROR)
@@ -202,7 +202,7 @@ void GatewayFactory::initSSLContextPubHexHandlerWithoutExtInfo()
         }
         else if (EVP_PKEY_EC == type)
         {
-            ec_key_st* ecPublicKey = EVP_PKEY_get0_EC_KEY(pKey);
+            ec_key_st const* ecPublicKey = EVP_PKEY_get0_EC_KEY(pKey);
             if (nullptr == ecPublicKey)
             {
                 GATEWAY_FACTORY_LOG(ERROR)

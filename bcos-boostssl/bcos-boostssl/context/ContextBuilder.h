@@ -30,13 +30,11 @@ public:
     using Ptr = std::shared_ptr<ContextBuilder>;
     using ConstPtr = std::shared_ptr<const ContextBuilder>;
 
-public:
     std::string readFileContent(boost::filesystem::path const& _file);
 
     std::string moduleName() { return m_moduleName; }
     void setModuleName(std::string _moduleName) { m_moduleName = _moduleName; }
 
-public:
     std::shared_ptr<boost::asio::ssl::context> buildSslContext(
         bool _server, const std::string& _configPath);
     std::shared_ptr<boost::asio::ssl::context> buildSslContext(
@@ -52,7 +50,6 @@ private:
     std::shared_ptr<boost::asio::ssl::context> buildSslContextByCertContent(
         bool _server, const ContextConfig::SMCertConfig& _smCertConfig);
 
-private:
     std::string m_moduleName = "DEFAULT";
 };
 

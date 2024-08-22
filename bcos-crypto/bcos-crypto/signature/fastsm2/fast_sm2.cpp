@@ -26,7 +26,6 @@
 #include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/obj_mac.h>
-#include <openssl/sm2.h>
 
 #ifdef WITH_SM2_OPTIMIZE
 using namespace bcos;
@@ -50,6 +49,9 @@ int8_t bcos::crypto::fast_sm2_sign(const CInputBuffer* raw_private_key,
     EC_KEY* sm2Key = nullptr;
     ECDSA_SIG* sig = nullptr;
     EC_POINT* publicKey = nullptr;
+    EVP_MD_CTX* md_ctx = nullptr;
+    EVP_PKEY* pkey = nullptr;
+    EVP_PKEY_CTX* pkey_ctx = nullptr;
     BIGNUM* privateKey = nullptr;
     BIGNUM* bn = nullptr;
     int8_t ret = WEDPR_ERROR;
@@ -104,8 +106,51 @@ int8_t bcos::crypto::fast_sm2_sign(const CInputBuffer* raw_private_key,
         CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of EC_KEY_set_public_key";
         goto done;
     }
-    sig = sm2_do_sign(sm2Key, EVP_sm3(), (const uint8_t*)c_userId, (size_t)strlen(c_userId),
-        (const uint8_t*)raw_message_hash->data, raw_message_hash->len);
+    pkey = EVP_PKEY_new();
+    if (pkey == nullptr)
+    {
+        CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of EVP_PKEY_new";
+        goto done;
+    }
+    if (!EVP_PKEY_set1_EC_KEY(pkey, sm2Key))
+    {
+        TRACE("%s\n", "EVP_PKEY_set1_EC_KEY error");
+        goto done;
+    }
+
+    md_ctx = EVP_MD_CTX_new();
+    if (md_ctx == nullptr)
+    {
+        CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of EVP_MD_CTX_new";
+        goto done;
+    }
+    pkey_ctx = EVP_PKEY_CTX_new(pkey, NULL);
+    if (pkey_ctx == nullptr)
+    {
+        CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of EVP_PKEY_CTX_new";
+        goto done;
+    }
+    if (EVP_PKEY_CTX_set1_id(pkey_ctx, c_userId, strlen(c_userId)) <= 0)
+    {
+        CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of EVP_PKEY_CTX_set1_id";
+        goto done;
+    }
+    EVP_MD_CTX_set_pkey_ctx(md_ctx, pkey_ctx);
+    if (!EVP_DigestSignInit(md_ctx, NULL, EVP_sm3(), NULL, pkey))
+    {
+        CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of EVP_DigestSignInit";
+        goto done;
+    }
+    if (!EVP_DigestSignUpdate(md_ctx, raw_message_hash->data, raw_message_hash->len))
+    {
+        CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of EVP_DigestSignUpdate";
+        goto done;
+    }
+    if (!EVP_DigestSignFinal(md_ctx, sig, c_R_FIELD_LEN + c_S_FIELD_LEN))
+    {
+        goto done;
+    }
+
     if (sig == NULL)
     {
         CRYPTO_LOG(ERROR) << "sm2: fast_sm2_sign: error of sm2_do_sign";
@@ -131,6 +176,10 @@ int8_t bcos::crypto::fast_sm2_sign(const CInputBuffer* raw_private_key,
     }
     ret = WEDPR_SUCCESS;
 done:
+    if (md_ctx)
+    {
+        EVP_MD_CTX_free(md_ctx);
+    }
     if (sm2Key)
     {
         EC_KEY_free(sm2Key);
