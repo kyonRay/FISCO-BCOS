@@ -103,15 +103,13 @@ public:
         // stop the thread
         for (auto& thread : m_threads)
         {
-            if (thread.get_id() != std::this_thread::get_id())
+            if (thread.joinable())
             {
                 thread.join();
             }
-            else
-            {
-                thread.detach();
-            }
         }
+        
+        m_threads.clear();
     }
 
 private:
