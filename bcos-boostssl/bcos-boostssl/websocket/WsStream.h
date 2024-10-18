@@ -122,8 +122,15 @@ public:
         bool falseValue = false;
         if (m_closed.compare_exchange_strong(falseValue, trueValue))
         {
+            boost::beast::error_code ec;
+            m_stream->close(boost::beast::websocket::close_code::normal, ec);
+
+            tcpStream().cancel();
+            tcpStream().close();
+
             auto& ss = boost::beast::get_lowest_layer(*m_stream);
             ws::WsTools::close(ss.socket());
+        
             WEBSOCKET_STREAM(INFO)
                 << LOG_DESC("the real action to close the stream") << LOG_KV("this", this);
         }
