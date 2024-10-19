@@ -157,6 +157,11 @@ public:
         using Ptr = std::shared_ptr<CallBack>;
         RespCallBack respCallBack;
         std::shared_ptr<boost::asio::deadline_timer> timer;
+        ~CallBack()
+        {
+            //            if(m_ioc)
+            timer->cancel();
+        }
     };
     virtual void addRespCallback(const std::string& _seq, CallBack::Ptr _callback);
     CallBack::Ptr getAndRemoveRespCallback(

@@ -134,7 +134,14 @@ void WsService::stop()
         return;
     }
     m_running = false;
-
+    boost::unique_lock<boost::shared_mutex> lock(x_mutex);
+    for (auto& [_, session] : m_sessions)
+    {
+        if (session)
+        {
+            session->drop(-1);
+        }
+    }
     // stop ioc thread
     if (m_ioservicePool)
     {
@@ -640,14 +647,12 @@ void WsService::asyncSendMessage(const WsSessions& _ss, std::shared_ptr<boostssl
             std::string endPoint = session->endPoint();
             // Note: should not pass session to the lamda operator[], this will lead to memory leak
             session->asyncSendMessage(msg, options,
-                [self, endPoint, callback = respFunc](
-                    auto&& _error, auto&& _msg, auto&& _session) {
+                [self, endPoint, callback = respFunc](auto&& _error, auto&& _msg, auto&& _session) {
                     if (_error && _error->errorCode() != 0)
                     {
                         BOOST_SSL_LOG(WARNING)
-                            << LOG_BADGE("asyncSendMessage")
-                            << LOG_DESC("callback failed") << LOG_KV("endpoint", endPoint)
-                            << LOG_KV("code", _error->errorCode())
+                            << LOG_BADGE("asyncSendMessage") << LOG_DESC("callback failed")
+                            << LOG_KV("endpoint", endPoint) << LOG_KV("code", _error->errorCode())
                             << LOG_KV("message", _error->errorMessage());
 
                         if (self->respFunc)

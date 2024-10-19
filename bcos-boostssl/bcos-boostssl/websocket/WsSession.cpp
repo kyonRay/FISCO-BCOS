@@ -40,13 +40,11 @@ using namespace bcos::boostssl;
 using namespace bcos::boostssl::ws;
 using namespace bcos::boostssl::http;
 
-WsSession::WsSession(tbb::task_group& taskGroup)
-  : m_taskGroup(taskGroup)
+WsSession::WsSession(tbb::task_group& taskGroup) : m_taskGroup(taskGroup)
 {
     WEBSOCKET_SESSION(INFO) << LOG_KV("[NEWOBJ][WSSESSION]", this);
 
     m_buffer = std::make_shared<boost::beast::flat_buffer>();
-
 }
 void WsSession::drop(uint32_t _reason)
 {
@@ -97,7 +95,7 @@ void WsSession::drop(uint32_t _reason)
         m_callbacks.clear();
     }
 
-    if (m_wsStreamDelegate)
+    if (m_wsStreamDelegate && !m_wsStreamDelegate->open())
     {
         m_wsStreamDelegate->close();
     }
@@ -223,26 +221,27 @@ void WsSession::asyncRead()
     {
         auto buffer = m_buffer;
         auto self = std::weak_ptr<WsSession>(shared_from_this());
-        m_wsStreamDelegate->asyncRead(*m_buffer, [self, buffer](boost::beast::error_code _ec, std::size_t) {
-            auto session = self.lock();
-            if (!session)
-            {
-                return;
-            }
+        m_wsStreamDelegate->asyncRead(
+            *m_buffer, [self, buffer](boost::beast::error_code _ec, std::size_t) {
+                auto session = self.lock();
+                if (!session)
+                {
+                    return;
+                }
 
-            if (_ec)
-            {
-                BCOS_LOG(INFO) << "[WS][SESSION]" << LOG_BADGE("asyncRead")
-                               << LOG_KV("message", _ec.message())
-                               << LOG_KV("endpoint", session->endPoint())
-                               << LOG_KV("refCount", session.use_count());
+                if (_ec)
+                {
+                    BCOS_LOG(INFO) << "[WS][SESSION]" << LOG_BADGE("asyncRead")
+                                   << LOG_KV("message", _ec.message())
+                                   << LOG_KV("endpoint", session->endPoint())
+                                   << LOG_KV("refCount", session.use_count());
 
-                return session->drop(WsError::ReadError);
-            }
+                    return session->drop(WsError::ReadError);
+                }
 
-            session->onReadPacket();
-            session->asyncRead();
-        });
+                session->onReadPacket();
+                session->asyncRead();
+            });
     }
     catch (const std::exception& _e)
     {
@@ -299,8 +298,8 @@ void WsSession::asyncWrite(std::shared_ptr<bcos::bytes> _buffer)
                 }
                 if (_ec)
                 {
-                    BCOS_LOG(WARNING) << LOG_BADGE("Session")
-                                      << LOG_BADGE("asyncWrite") << LOG_KV("message", _ec.message())
+                    BCOS_LOG(WARNING) << LOG_BADGE("Session") << LOG_BADGE("asyncWrite")
+                                      << LOG_KV("message", _ec.message())
                                       << LOG_KV("endpoint", session->endPoint());
                     return session->drop(WsError::WriteError);
                 }
