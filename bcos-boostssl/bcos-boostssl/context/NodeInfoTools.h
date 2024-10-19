@@ -38,4 +38,4 @@ public:
         std::shared_ptr<std::string> nodeIDOut);
 };
 
-}  // namespace bcos
+}  // namespace bcos::boostssl::context

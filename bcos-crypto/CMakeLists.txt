@@ -23,7 +23,7 @@ endif()
 if(TESTS)
     enable_testing()
     add_subdirectory(test)
-    add_subdirectory(demo)
+#    add_subdirectory(demo)
 endif()
 
 include(GNUInstallDirs)
