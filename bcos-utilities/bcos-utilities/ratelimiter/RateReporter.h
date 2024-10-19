@@ -107,7 +107,6 @@ public:
     {
         auto& stat = m_rateReporterStat;
         BCOS_LOG(INFO) << LOG_BADGE("RateReporter")
-                       << LOG_BADGE(m_moduleName)
                        //    << LOG_KV("totalCount", stat.totalCount)
                        //    << LOG_KV("totalFailedCount", stat.totalFailedCount)
                        //    << LOG_KV("totalDataSize", stat.totalDataSize)
@@ -148,7 +147,6 @@ public:
     }
 
 private:
-    std::string m_moduleName;
     uint32_t m_intervalMS;
     RateReporterStat m_rateReporterStat;
     std::shared_ptr<Timer> m_reportTimer;
