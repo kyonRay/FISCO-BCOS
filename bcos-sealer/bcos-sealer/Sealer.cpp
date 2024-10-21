@@ -201,3 +201,12 @@ uint16_t Sealer::hookWhenSealBlock(bcos::protocol::Block::Ptr _block)
     return VRFBasedSealer::generateTransactionForRotating(
         _block, m_sealerConfig, m_sealingManager, m_hashImpl);
 }
+
+void Sealer::asyncNotifyBlockResult(bcos::protocol::BlockNumber _blockNumber,
+    bcos::protocol::TransactionSubmitResultsPtr _txsResult)
+{
+    SEAL_LOG(INFO) << LOG_DESC("asyncNotifyBlockResult") << LOG_KV("blockNumber", _blockNumber)
+                   << LOG_KV("txsResultSize",
+                          _txsResult ? std::to_string(_txsResult->size()) : "null");
+    m_sealingManager->notifyBlockResult(_txsResult);
+}

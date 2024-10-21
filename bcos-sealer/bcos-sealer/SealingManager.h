@@ -66,6 +66,7 @@ public:
         return m_onReady.add(std::move(callback));
     }
     virtual void notifyResetProposal(bcos::protocol::Block const& _block);
+    virtual void notifyBlockResult(bcos::protocol::TransactionSubmitResultsPtr _txsResult);
 
 protected:
     virtual void appendTransactions(
@@ -84,6 +85,7 @@ private:
     TxsMetaDataQueue m_pendingSysTxs;
     SharedMutex x_pendingTxs;
 
+    std::set<bcos::crypto::HashType> m_avoidTxs = {};
     ThreadPool::Ptr m_worker;
 
     std::atomic<uint64_t> m_lastSealTime = {0};

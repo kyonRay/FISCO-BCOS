@@ -468,10 +468,12 @@ void Initializer::initNotificationHandlers(bcos::rpc::RPCInterface::Ptr _rpc)
             });
         // notify transactions
         schedulerFactory->setTransactionNotifier(
-            [txpool = m_txpoolInitializer->txpool()](bcos::protocol::BlockNumber _blockNumber,
+            [txpool = m_txpoolInitializer->txpool(), sealer = m_pbftInitializer->sealer()](
+                bcos::protocol::BlockNumber _blockNumber,
                 bcos::protocol::TransactionSubmitResultsPtr _result,
                 std::function<void(bcos::Error::Ptr)> _callback) {
                 // only response to the requester
+                sealer->asyncNotifyBlockResult(_blockNumber, _result);
                 txpool->asyncNotifyBlockResult(
                     _blockNumber, std::move(_result), std::move(_callback));
             });

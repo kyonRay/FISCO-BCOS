@@ -65,6 +65,9 @@ public:
 
     uint16_t hookWhenSealBlock([[maybe_unused]] bcos::protocol::Block::Ptr _block) override;
 
+    virtual void asyncNotifyBlockResult(bcos::protocol::BlockNumber _blockNumber,
+        bcos::protocol::TransactionSubmitResultsPtr _txsResult) override;
+
     // only for test
     SealerConfig::Ptr sealerConfig() const { return m_sealerConfig; }
     SealingManager::Ptr sealingManager() const { return m_sealingManager; }

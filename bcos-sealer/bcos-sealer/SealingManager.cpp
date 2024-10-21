@@ -137,6 +137,18 @@ void SealingManager::notifyResetProposal(bcos::protocol::Block const& _block)
     notifyResetTxsFlag(txsHashList, false);
 }
 
+void SealingManager::notifyBlockResult(bcos::protocol::TransactionSubmitResultsPtr _txsResult)
+{
+    if (_txsResult == nullptr)
+    {
+        return;
+    }
+    for (const auto& txResult : *_txsResult)
+    {
+        m_avoidTxs.insert(txResult->txHash());
+    }
+}
+
 std::pair<bool, bcos::protocol::Block::Ptr> SealingManager::generateProposal(
     std::function<uint16_t(bcos::protocol::Block::Ptr)> _handleBlockHook)
 {
@@ -208,6 +220,15 @@ std::pair<bool, bcos::protocol::Block::Ptr> SealingManager::generateProposal(
     // Note: When the last block(N) sealed by this node contains system transactions,
     //       if other nodes do not wait until block(N) is committed and directly seal block(N+1),
     //       will cause system exceptions.
+    if (c_fileLogLevel == TRACE)
+    {
+        SEAL_LOG(TRACE) << LOG_DESC("generateProposal")
+                        << LOG_KV("txsSize", block->transactionsMetaDataSize())
+                        << LOG_KV("sysTxsSize", systemTxsSize)
+                        << LOG_KV("containSysTxs", containSysTxs)
+                        << LOG_KV("pendingSize", m_pendingTxs.size())
+                        << LOG_KV("pendingSysSize", m_pendingSysTxs.size());
+    }
     return {containSysTxs, block};
 }
 
@@ -273,7 +294,7 @@ void SealingManager::fetchTransactions()
     ssize_t startSealingNumber = m_startSealingNumber;
     ssize_t endSealingNumber = m_endSealingNumber;
     auto self = weak_from_this();
-    m_config->txpool()->asyncSealTxs(txsToFetch, nullptr,
+    m_config->txpool()->asyncSealTxs(txsToFetch, std::make_shared<decltype(m_avoidTxs)>(m_avoidTxs),
         [self, startSealingNumber, endSealingNumber](
             Error::Ptr _error, Block::Ptr _txsHashList, Block::Ptr _sysTxsList) {
             try
@@ -313,6 +334,8 @@ void SealingManager::fetchTransactions()
                 SEAL_LOG(DEBUG) << LOG_DESC("fetchTransactions finish")
                                 << LOG_KV("txsSize", _txsHashList->transactionsMetaDataSize())
                                 << LOG_KV("sysTxsSize", _sysTxsList->transactionsMetaDataSize())
+                                << LOG_KV("pendingSize", sealingMgr->m_pendingTxs.size())
+                                << LOG_KV("pendingSysSize", sealingMgr->m_pendingSysTxs.size())
                                 << LOG_KV("startSealingNumber", startSealingNumber)
                                 << LOG_KV("endSealingNumber", endSealingNumber)
                                 << LOG_KV("sealingNumber", sealingMgr->m_sealingNumber)
