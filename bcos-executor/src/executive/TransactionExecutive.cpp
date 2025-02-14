@@ -313,31 +313,57 @@ CallParameters::UniquePtr TransactionExecutive::execute(CallParameters::UniquePt
     if (!callParameters->staticCall &&
         m_blockContext.features().get(ledger::Features::Flag::feature_evm_address)) [[unlikely]]
     {
-        // 如果是EOA发起交易，那么必须要更新nonce;
-        // 如果是合约调用合约，那么只有在create场景下才更新nonce。
-        // If it is an EOA initiating a transaction, the nonce must be updated; if it is a contract
-        // calling a contract, the nonce is updated only in the creation scenario.
-        if ((callParameters->origin == callParameters->senderAddress &&
-                callParameters->transactionType != 0) ||
-            (callParameters->create && !callParameters->internalCreate))
+        if (m_blockContext.features().get(
+                ledger::Features::Flag::bugfix_nonce_not_increase_when_revert))
         {
-            // TODO)): set nonce here will be better
-            ledger::account::EVMAccount address(*m_blockContext.storage(),
-                callParameters->senderAddress,
-                m_blockContext.features().get(ledger::Features::Flag::feature_raw_address));
-            task::wait([](decltype(address) addr, u256 callNonce) -> task::Task<void> {
-                if (!co_await ledger::account::exists(addr))
-                {
-                    co_await ledger::account::create(addr);
-                }
-                auto const nonceInStorage = co_await ledger::account::nonce(addr);
-                // FIXME)) : only web3 tx use this
-                auto const storageNonce = u256(nonceInStorage.value_or("0"));
-                auto const newNonce = std::max(callNonce, storageNonce) + 1;
-                co_await ledger::account::setNonce(addr, newNonce.convert_to<std::string>());
-            }(std::move(address), callParameters->nonce));
+            // only update contract's nonce when contract create contract
+            if (callParameters->origin != callParameters->senderAddress && callParameters->create &&
+                !callParameters->internalCreate)
+            {
+                ledger::account::EVMAccount address(*m_blockContext.storage(),
+                    callParameters->senderAddress,
+                    m_blockContext.features().get(ledger::Features::Flag::feature_raw_address));
+                task::wait([](decltype(address) addr) -> task::Task<void> {
+                    co_await ledger::account::increaseNonce(addr);
+                }(std::move(address)));
+            }
+        }
+        else
+        {
+            // 如果是EOA发起交易，那么必须要更新nonce;
+            // 如果是合约调用合约，那么只有在create场景下才更新nonce。
+            // If it is an EOA initiating a transaction, the nonce must be updated; if it is a
+            // contract calling a contract, the nonce is updated only in the creation scenario.
+            if ((callParameters->origin == callParameters->senderAddress &&
+                    callParameters->transactionType != 0) ||
+                (callParameters->create && !callParameters->internalCreate))
+            {
+                // TODO)): set nonce here will be better
+                ledger::account::EVMAccount address(*m_blockContext.storage(),
+                    callParameters->senderAddress,
+                    m_blockContext.features().get(ledger::Features::Flag::feature_raw_address));
+                task::wait([](decltype(address) addr, u256 callNonce) -> task::Task<void> {
+                    if (!co_await ledger::account::exists(addr))
+                    {
+                        co_await ledger::account::create(addr);
+                    }
+                    auto const nonceInStorage = co_await ledger::account::nonce(addr);
+                    // FIXME)) : only web3 tx use this
+                    auto const storageNonce = u256(nonceInStorage.value_or("0"));
+                    auto const newNonce = std::max(callNonce, storageNonce) + 1;
+                    co_await ledger::account::setNonce(addr, newNonce.convert_to<std::string>());
+                }(std::move(address), callParameters->nonce));
+            }
         }
     }
+
+    bool updateEoaNonce =
+        !callParameters->staticCall &&
+        callParameters->transactionType != TransactionType::BCOSTransaction &&
+        callParameters->origin == callParameters->senderAddress &&
+        m_blockContext.features().get(ledger::Features::Flag::feature_evm_address) &&
+        m_blockContext.features().get(
+            ledger::Features::Flag::bugfix_nonce_not_increase_when_revert);
 
     if (callParameters->create)
     {
@@ -355,6 +381,23 @@ CallParameters::UniquePtr TransactionExecutive::execute(CallParameters::UniquePt
         // TODO: check this function is ok if we need to use this
         hostContext->sub().refunds +=
             hostContext->vmSchedule().suicideRefundGas * hostContext->sub().suicides.size();
+    }
+
+    if (updateEoaNonce)
+    {
+        // only increase the nonce of EOA
+        ledger::account::EVMAccount address(*m_blockContext.storage(), callResults->origin,
+            m_blockContext.features().get(ledger::Features::Flag::feature_raw_address));
+        task::wait([](decltype(address) addr, u256 callNonce) -> task::Task<void> {
+            if (!co_await ledger::account::exists(addr))
+            {
+                co_await ledger::account::create(addr);
+            }
+            auto const nonceInStorage = co_await ledger::account::nonce(addr);
+            auto const storageNonce = u256(nonceInStorage.value_or("0"));
+            auto const newNonce = std::max(callNonce, storageNonce) + 1;
+            co_await ledger::account::setNonce(addr, newNonce.convert_to<std::string>());
+        }(std::move(address), callResults->nonce));
     }
     if (c_fileLogLevel <= LogLevel::TRACE)
     {
@@ -749,6 +792,17 @@ std::tuple<std::unique_ptr<HostContext>, CallParameters::UniquePtr> TransactionE
                                  << LOG_KV("table", tableName)
                                  << LOG_KV("sender", callParameters->senderAddress)
                                  << LOG_KV("value", callParameters->value);
+        }
+
+        if (m_blockContext.features().get(
+                ledger::Features::Flag::bugfix_set_contract_nonce_when_create)) [[unlikely]]
+        {
+            // set nonce to 1 when create contract
+            ledger::account::EVMAccount account(
+                *m_blockContext.storage(), callParameters->codeAddress, false);
+            task::wait([](decltype(account) contract_account) -> task::Task<void> {
+                co_await ledger::account::setNonce(contract_account, "1");
+            }(std::move(account)));
         }
 
         if (m_blockContext.features().get(ledger::Features::Flag::feature_sharding))
