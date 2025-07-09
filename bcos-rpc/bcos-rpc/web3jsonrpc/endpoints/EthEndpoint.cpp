@@ -621,7 +621,7 @@ task::Task<void> EthEndpoint::getBlockByHash(const Json::Value& request, Json::V
     {
         auto const number = co_await ledger::getBlockNumber(
             *ledger, crypto::HashType(blockHash, crypto::HashType::FromHex));
-        auto flag = bcos::ledger::HEADER;
+        auto flag = bcos::ledger::HEADER | bcos::ledger::RECEIPTS;
         flag |= fullTransaction ? bcos::ledger::TRANSACTIONS : bcos::ledger::TRANSACTIONS_HASH;
         auto block = co_await ledger::getBlockData(*ledger, number, flag);
         combineBlockResponse(result, std::move(block), fullTransaction);
@@ -644,7 +644,7 @@ task::Task<void> EthEndpoint::getBlockByNumber(const Json::Value& request, Json:
     {
         auto [blockNumber, _] = co_await getBlockNumberByTag(blockTag);
         auto const ledger = m_nodeService->ledger();
-        auto flag = bcos::ledger::HEADER;
+        auto flag = bcos::ledger::HEADER | bcos::ledger::RECEIPTS;
         flag |= fullTransaction ? bcos::ledger::TRANSACTIONS : bcos::ledger::TRANSACTIONS_HASH;
         auto block = co_await ledger::getBlockData(*ledger, blockNumber, flag);
         combineBlockResponse(result, std::move(block), fullTransaction);
