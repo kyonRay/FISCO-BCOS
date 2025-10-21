@@ -30,7 +30,7 @@
 
 namespace bcos::protocol
 {
-class BlockHeader : public virtual MoveBase<BlockHeader>
+class BlockHeader
 {
 public:
     using Ptr = std::shared_ptr<BlockHeader>;
@@ -144,6 +144,7 @@ public:
     virtual size_t size() const = 0;
 };
 
-using AnyBlockHeader = AnyHolder<BlockHeader, 48>;
+using AnyBlockHeader = AnyHolder<BlockHeader, 72>;  // 多平台BlockHeaderImpl的最大尺寸 (Maximum size
+                                                    // of BlockHeaderImpl across platforms)
 
 }  // namespace bcos::protocol
