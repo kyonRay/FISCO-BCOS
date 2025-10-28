@@ -287,7 +287,7 @@ BOOST_AUTO_TEST_CASE(BatchRemoveSealedTxsWithWeb3Transactions)
     
     // After removing sealed txs with nonce 5 and 7 for sender1,
     // the ledger nonce should be updated to 8 (7+1)
-    // getPendingNonce expects hex string, so convert sender bytes to hex
+    // Note: getPendingNonce expects hex string format
     auto pendingNonce1 = task::syncWait(web3Checker->getPendingNonce(sender1Hex));
     BOOST_CHECK(pendingNonce1.has_value());
     if (pendingNonce1.has_value())
@@ -357,8 +357,8 @@ BOOST_AUTO_TEST_CASE(BatchRemoveSealedTxsMixedTypes)
     BOOST_CHECK_EQUAL(storage.size(), 0U);
     
     // Verify Web3 nonce updated correctly (max nonce 12, so pending should be 13)
-    // getPendingNonce expects hex string
     auto web3Checker = config->txValidator()->web3NonceChecker();
+    // Note: getPendingNonce expects hex string format
     auto pendingNonce = task::syncWait(web3Checker->getPendingNonce(web3SenderHex));
     BOOST_CHECK(pendingNonce.has_value());
     if (pendingNonce.has_value())
