@@ -223,10 +223,6 @@ BOOST_AUTO_TEST_CASE(BatchRemoveSealedTxsWithWeb3Transactions)
     auto web3Tx2 = makeWeb3Tx("0x7", sender1Hex, true);  // sealed, nonce 7
     auto web3Tx3 = makeWeb3Tx("0x3", sender2Hex, true);  // sealed, nonce 3
     
-    // Get the actual sender bytes from the transaction (this is what the code uses)
-    auto sender1 = std::string(web3Tx1->sender());
-    auto sender2 = std::string(web3Tx3->sender());
-    
     // Create a BCOS transaction (for comparison)
     auto bcosTx = makeTx("bcos_nonce_1", true);
     
@@ -291,7 +287,8 @@ BOOST_AUTO_TEST_CASE(BatchRemoveSealedTxsWithWeb3Transactions)
     
     // After removing sealed txs with nonce 5 and 7 for sender1,
     // the ledger nonce should be updated to 8 (7+1)
-    auto pendingNonce1 = task::syncWait(web3Checker->getPendingNonce(sender1));
+    // getPendingNonce expects hex string, so convert sender bytes to hex
+    auto pendingNonce1 = task::syncWait(web3Checker->getPendingNonce(sender1Hex));
     BOOST_CHECK(pendingNonce1.has_value());
     if (pendingNonce1.has_value())
     {
@@ -300,7 +297,7 @@ BOOST_AUTO_TEST_CASE(BatchRemoveSealedTxsWithWeb3Transactions)
     }
     
     // For sender2, pending nonce should be 4 (3+1)
-    auto pendingNonce2 = task::syncWait(web3Checker->getPendingNonce(sender2));
+    auto pendingNonce2 = task::syncWait(web3Checker->getPendingNonce(sender2Hex));
     BOOST_CHECK(pendingNonce2.has_value());
     if (pendingNonce2.has_value())
     {
@@ -319,9 +316,6 @@ BOOST_AUTO_TEST_CASE(BatchRemoveSealedTxsMixedTypes)
     auto web3Tx2 = makeWeb3Tx("0xc", web3SenderHex, true);  // nonce 12
     auto bcosTx1 = makeTx("bcos_n1", true);
     auto bcosTx2 = makeTx("bcos_n2", true);
-    
-    // Get the actual sender bytes from the transaction
-    auto web3Sender = std::string(web3Tx1->sender());
     
     storage.insert(web3Tx1);
     storage.insert(web3Tx2);
@@ -363,8 +357,9 @@ BOOST_AUTO_TEST_CASE(BatchRemoveSealedTxsMixedTypes)
     BOOST_CHECK_EQUAL(storage.size(), 0U);
     
     // Verify Web3 nonce updated correctly (max nonce 12, so pending should be 13)
+    // getPendingNonce expects hex string
     auto web3Checker = config->txValidator()->web3NonceChecker();
-    auto pendingNonce = task::syncWait(web3Checker->getPendingNonce(web3Sender));
+    auto pendingNonce = task::syncWait(web3Checker->getPendingNonce(web3SenderHex));
     BOOST_CHECK(pendingNonce.has_value());
     if (pendingNonce.has_value())
     {
