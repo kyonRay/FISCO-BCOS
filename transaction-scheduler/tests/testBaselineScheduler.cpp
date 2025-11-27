@@ -1,11 +1,14 @@
+#include "bcos-crypto/hash/Keccak256.h"
 #include "bcos-crypto/interfaces/crypto/CommonType.h"
 #include "bcos-framework/ledger/Ledger.h"
 #include "bcos-framework/ledger/LedgerTypeDef.h"
 #include "bcos-framework/protocol/Transaction.h"
 #include "bcos-framework/storage/Entry.h"
 #include "bcos-framework/storage2/MemoryStorage.h"
+#include "bcos-framework/storage2/MultiLayerStorage.h"
 #include "bcos-framework/txpool/TxPoolInterface.h"
 #include "bcos-ledger/LedgerMethods.h"
+#include "bcos-protocol/TransactionSubmitResultFactoryImpl.h"
 #include "bcos-tars-protocol/protocol/BlockFactoryImpl.h"
 #include "bcos-tars-protocol/protocol/BlockHeaderFactoryImpl.h"
 #include "bcos-tars-protocol/protocol/BlockImpl.h"
@@ -14,11 +17,7 @@
 #include "bcos-tars-protocol/protocol/TransactionReceiptFactoryImpl.h"
 #include "bcos-tars-protocol/protocol/TransactionReceiptImpl.h"
 #include "bcos-task/AwaitableValue.h"
-#include "bcos-transaction-scheduler/MultiLayerStorage.h"
-#include <bcos-crypto/hash/Keccak256.h>
-#include <bcos-protocol/TransactionSubmitResultFactoryImpl.h>
-#include <bcos-transaction-scheduler/BaselineScheduler.h>
-#include <bcos-transaction-scheduler/SchedulerSerialImpl.h>
+#include "bcos-transaction-scheduler/BaselineScheduler.h"
 #include <boost/test/unit_test.hpp>
 #include <fakeit.hpp>
 #include <future>
@@ -77,8 +76,17 @@ struct MockScheduler
             ::ranges::views::transform([](size_t index) -> protocol::TransactionReceipt::Ptr {
                 auto receipt = std::make_shared<bcostars::protocol::TransactionReceiptImpl>();
                 constexpr static std::string_view str = "abc";
-                receipt->mutableInner().dataHash.assign(str.begin(), str.end());
-                receipt->mutableInner().data.gasUsed = "100";
+                auto& inner = receipt->inner();
+                inner.dataHash.assign(str.begin(), str.end());
+                inner.data.gasUsed = "100";
+
+                bytes logAddress;
+                logAddress.assign(str.begin(), str.end());
+                bcos::protocol::LogEntry logEntry{
+                    logAddress, bcos::h256s{bcos::h256{}}, bcos::bytes{}};
+                std::vector<bcos::protocol::LogEntry> logs;
+                logs.emplace_back(std::move(logEntry));
+                receipt->setLogEntries(logs);
                 return receipt;
             }) |
             ::ranges::to<std::vector<protocol::TransactionReceipt::Ptr>>();
@@ -227,6 +235,18 @@ BOOST_AUTO_TEST_CASE(scheduleBlock)
                     co_await ledger::getBlockNumber(view, blockHeader->hash(), ledger::fromStorage);
                 BOOST_CHECK_EQUAL(blockNumber.value(), blockHeader->number());
             }());
+
+            for (auto receipt : block->receipts())
+            {
+                auto logsSpan = receipt->logEntries();
+                std::vector<bcos::protocol::LogEntry> logs{logsSpan.begin(), logsSpan.end()};
+                auto expectedBloom = bcos::getLogsBloom(logs);
+
+                auto actualView = receipt->logsBloom();
+                BOOST_CHECK_EQUAL_COLLECTIONS(expectedBloom.begin(), expectedBloom.end(),
+                    actualView.begin(), actualView.end());
+            }
+
             end.set_value();
         });
 

@@ -1,7 +1,7 @@
 #include "ReceiptResponse.h"
-#include "Bloom.h"
+#include "Log.h"
+#include "Web3Transaction.h"
 #include "bcos-crypto/ChecksumAddress.h"
-#include "bcos-rpc/web3jsonrpc/model/Web3Transaction.h"
 #include "bcos-utilities/Common.h"
 #include "bcos-utilities/DataConvertUtility.h"
 #include <cstdint>
@@ -17,7 +17,7 @@ void bcos::rpc::combineReceiptResponse(Json::Value& result, protocol::Transactio
     result["status"] = toQuantity(status);
     auto txHashHex = tx.hash().hexPrefixed();
     result["transactionHash"] = txHashHex;
-    u256 cumulativeGasUsed = boost::lexical_cast<u256>(receipt.cumulativeGasUsed());
+    auto cumulativeGasUsed = safeCastToU256(receipt.cumulativeGasUsed());
     size_t logIndex = receipt.logIndex();
     auto transactionIndex = toQuantity(receipt.transactionIndex());
     result["transactionIndex"] = transactionIndex;
@@ -83,8 +83,7 @@ void bcos::rpc::combineReceiptResponse(Json::Value& result, protocol::Transactio
             .data = receiptLog[i].takeData()};
         logs.push_back(std::move(logObj));
     }
-    auto logsBloom = getLogsBloom(logs);
-    result["logsBloom"] = toHexStringWithPrefix(logsBloom);
+    result["logsBloom"] = toHexStringWithPrefix(receipt.logsBloom());
     auto type = TransactionType::Legacy;
     if (!tx.extraTransactionBytes().empty())
     {

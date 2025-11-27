@@ -2,7 +2,7 @@
 #include "MockBlockHeader.h"
 #include "bcos-framework/protocol/BlockHeader.h"
 #include "bcos-utilities/AnyHolder.h"
-#include <bcos-framework/protocol/Block.h>
+#include "bcos-framework/protocol/Block.h"
 
 namespace bcos::test
 {
@@ -60,6 +60,8 @@ public:
     }
     protocol::ViewResult<protocol::AnyTransaction> transactions() const override { return {}; }
     protocol::ViewResult<protocol::AnyTransactionReceipt> receipts() const override { return {}; }
+    bcos::bytesConstRef logsBloom() const override { return {}; }
+    void setLogsBloom(bcos::bytesConstRef logsBloom) override {}
 
 private:
     protocol::BlockHeader::Ptr m_blockHeader = std::make_shared<MockBlockHeader>(1);

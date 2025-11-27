@@ -1,11 +1,9 @@
 #pragma once
-#include "bcos-utilities/AnyHolder.h"
-#include <bcos-framework/protocol/BlockHeader.h>
+#include "bcos-framework/protocol/BlockHeader.h"
 
 namespace bcos::test
 {
-class MockBlockHeader : public bcos::protocol::BlockHeader,
-                        public virtual MoveImpl<MockBlockHeader, class bcos::protocol::BlockHeader>
+class MockBlockHeader : public bcos::protocol::BlockHeader
 {
 public:
     MockBlockHeader(const MockBlockHeader&) = default;
@@ -38,6 +36,7 @@ public:
     bytesConstRef extraData() const override { return {}; }
     gsl::span<const protocol::Signature> signatureList() const override { return {}; }
     gsl::span<const uint64_t> consensusWeights() const override { return {}; }
+
     void setVersion(uint32_t _version) override {}
     void setParentInfo(RANGES::any_view<bcos::protocol::ParentInfo> parentInfo) override {}
     void setTxsRoot(bcos::crypto::HashType _txsRoot) override {}

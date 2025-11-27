@@ -19,6 +19,7 @@
  */
 
 #include "JsonValidator.h"
+#include <boost/regex.hpp>
 
 namespace bcos::rpc
 {
@@ -67,8 +68,9 @@ std::tuple<bool, std::string> JsonValidator::checkRequestFields(const Json::Valu
             {
                 if (item->isString())
                 {
+                    const static boost::regex IDRegex("^[0-9a-fA-F-]+$");
                     if (std::string idString = item->asString();
-                        !std::regex_match(idString, std::regex("^[0-9a-fA-F-]+$")))
+                        !boost::regex_match(idString, IDRegex))
                     {
                         return {false, "Invalid field: " + item.name()};
                     }

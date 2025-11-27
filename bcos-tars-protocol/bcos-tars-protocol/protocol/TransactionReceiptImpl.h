@@ -38,9 +38,7 @@
 
 namespace bcostars::protocol
 {
-class TransactionReceiptImpl
-  : public bcos::protocol::TransactionReceipt,
-    public virtual bcos::MoveImpl<TransactionReceiptImpl, bcos::protocol::TransactionReceipt>
+class TransactionReceiptImpl : public bcos::protocol::TransactionReceipt
 {
 public:
     TransactionReceiptImpl(const TransactionReceiptImpl&) = default;
@@ -78,7 +76,7 @@ public:
     void setLogIndex(size_t index) override;
 
     const bcostars::TransactionReceipt& inner() const;
-    bcostars::TransactionReceipt& mutableInner();
+    bcostars::TransactionReceipt& inner();
 
     void setInner(const bcostars::TransactionReceipt& inner);
     void setInner(bcostars::TransactionReceipt&& inner);

@@ -22,18 +22,20 @@
 #include "Exceptions.h"
 #include "ProtocolTypeDef.h"
 #include "bcos-utilities/AnyHolder.h"
+#include "bcos-utilities/Common.h"
+#include "bcos-utilities/Exceptions.h"
 #include <bcos-crypto/interfaces/crypto/CryptoSuite.h>
 #include <bcos-utilities/DataConvertUtility.h>
 #include <gsl/span>
 
 namespace bcos::protocol
 {
-class BlockHeader : public virtual MoveBase<BlockHeader>
+class BlockHeader
 {
 public:
     using Ptr = std::shared_ptr<BlockHeader>;
     using ConstPtr = std::shared_ptr<const BlockHeader>;
-    using BlockHeadersPtr = std::shared_ptr<std::vector<BlockHeader::Ptr> >;
+
     BlockHeader() = default;
     BlockHeader(const BlockHeader&) = default;
     BlockHeader(BlockHeader&&) noexcept = default;
@@ -73,9 +75,9 @@ public:
         auto sealers = sealerList();
         if (signatures.size() < sealers.size())
         {
-            BOOST_THROW_EXCEPTION(InvalidBlockHeader() << errinfo_comment(
-                                      "Invalid blockHeader for the size of sealerList "
-                                      "is smaller than the size of signatureList"));
+            throwTrace(InvalidBlockHeader()
+                           << errinfo_comment("Invalid blockHeader for the size of sealerList "
+                                              "is smaller than the size of signatureList"));
         }
         for (const auto& signature : signatures)
         {
@@ -85,10 +87,9 @@ public:
                     std::shared_ptr<const bytes>(&((sealers)[sealerIndex]), [](const bytes*) {}),
                     hash(), bytesConstRef(signatureData.data(), signatureData.size())))
             {
-                BOOST_THROW_EXCEPTION(
-                    InvalidSignatureList()
-                    << errinfo_comment("Invalid signatureList for verify failed, signatureData:" +
-                                       *toHexString(signatureData)));
+                throwTrace(InvalidSignatureList() << errinfo_comment(
+                                   "Invalid signatureList for verify failed, signatureData:" +
+                                   *toHexString(signatureData)));
             }
         }
     }
@@ -100,18 +101,12 @@ public:
         setTimestamp(_timestamp);
     }
 
-    // version returns the version of the blockHeader
     virtual uint32_t version() const = 0;
-    // parentInfo returns the parent information, including (parentBlockNumber, parentHash)
-    virtual RANGES::any_view<ParentInfo, RANGES::category::input | RANGES::category::sized>
+    virtual ::ranges::any_view<ParentInfo, ::ranges::category::input | ::ranges::category::sized>
     parentInfo() const = 0;
-    // txsRoot returns the txsRoot of the current block
     virtual bcos::crypto::HashType txsRoot() const = 0;
-    // receiptsRoot returns the receiptsRoot of the current block
     virtual bcos::crypto::HashType receiptsRoot() const = 0;
-    // stateRoot returns the stateRoot of the current block
     virtual bcos::crypto::HashType stateRoot() const = 0;
-    // number returns the number of the current block
     virtual BlockNumber number() const = 0;
     virtual u256 gasUsed() const = 0;
     virtual int64_t timestamp() const = 0;
@@ -124,7 +119,7 @@ public:
     virtual gsl::span<const uint64_t> consensusWeights() const = 0;
 
     virtual void setVersion(uint32_t _version) = 0;
-    virtual void setParentInfo(RANGES::any_view<bcos::protocol::ParentInfo> parentInfo) = 0;
+    virtual void setParentInfo(::ranges::any_view<bcos::protocol::ParentInfo> parentInfo) = 0;
 
     virtual void setTxsRoot(bcos::crypto::HashType _txsRoot) = 0;
     virtual void setReceiptsRoot(bcos::crypto::HashType _receiptsRoot) = 0;
@@ -149,5 +144,7 @@ public:
     virtual size_t size() const = 0;
 };
 
-using AnyBlockHeader = AnyHolder<BlockHeader, 48>;
+using AnyBlockHeader = AnyHolder<BlockHeader, 72>;  // 多平台BlockHeaderImpl的最大尺寸 (Maximum size
+                                                    // of BlockHeaderImpl across platforms)
+
 }  // namespace bcos::protocol

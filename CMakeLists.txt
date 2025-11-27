@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.28)
 
 if(NOT DEFINED URL_BASE)
     set(URL_BASE "github.com")
@@ -6,7 +6,7 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
-set(VERSION "3.16.2")
+set(VERSION "3.16.3")
 set(VERSION_SUFFIX "")
 include(Options)
 configure_project()
@@ -62,7 +62,6 @@ if(FULLNODE)
     include(ProjectGroupSig)
     include(ProjectPaillier)
     include(ProjectBLST)
-    include(ProjectTOMLPP)
 
     add_subdirectory(bcos-sealer)
     add_subdirectory(bcos-security)

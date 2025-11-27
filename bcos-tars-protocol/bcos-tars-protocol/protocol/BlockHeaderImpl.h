@@ -21,7 +21,6 @@
 
 #pragma once
 // if windows, manual include tup/Tars.h first
-#include "bcos-utilities/AnyHolder.h"
 #ifdef _WIN32
 #include <tup/Tars.h>
 #endif
@@ -34,9 +33,7 @@
 
 namespace bcostars::protocol
 {
-class BlockHeaderImpl
-  : public bcos::protocol::BlockHeader,
-    public virtual bcos::MoveImpl<bcostars::protocol::BlockHeaderImpl, bcos::protocol::BlockHeader>
+class BlockHeaderImpl : public bcos::protocol::BlockHeader
 {
 public:
     explicit BlockHeaderImpl(std::function<bcostars::BlockHeader*()> inner);
@@ -71,7 +68,6 @@ public:
     gsl::span<const bcos::bytes> sealerList() const override;
     bcos::bytesConstRef extraData() const override;
     gsl::span<const bcos::protocol::Signature> signatureList() const override;
-
     gsl::span<const uint64_t> consensusWeights() const override;
 
     void setVersion(uint32_t _version) override;
@@ -92,6 +88,8 @@ public:
     void setSignatureList(
         gsl::span<const bcos::protocol::Signature> const& _signatureList) override;
     void setSignatureList(bcos::protocol::SignatureList&& _signatureList) override;
+
+
     const bcostars::BlockHeader& inner() const;
     bcostars::BlockHeader& inner();
     void setInner(bcostars::BlockHeader blockHeader);

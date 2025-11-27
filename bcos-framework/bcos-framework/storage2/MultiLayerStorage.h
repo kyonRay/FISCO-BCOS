@@ -1,5 +1,5 @@
 #pragma once
-#include "bcos-framework/storage2/Storage.h"
+#include "Storage.h"
 #include "bcos-task/TBBWait.h"
 #include "bcos-task/Trait.h"
 #include "bcos-utilities/Exceptions.h"
@@ -14,7 +14,7 @@
 #include <type_traits>
 #include <variant>
 
-namespace bcos::scheduler_v1
+namespace bcos::storage2
 {
 
 DERIVE_BCOS_EXCEPTION(DuplicateMutableStorageError);
@@ -481,7 +481,7 @@ public:
         m_storages.push_front(std::move(view.m_mutableStorage));
     }
 
-    task::Task<std::shared_ptr<MutableStorage>> mergeBackStorage(auto&... fromStorage)
+    task::Task<std::shared_ptr<MutableStorage>> mergeBackStorage(auto&... extraStorages)
     {
         std::unique_lock mergeLock(m_mergeMutex);
         std::unique_lock listLock(m_listMutex);
@@ -500,20 +500,20 @@ public:
                     ittapi::Report report(ittapi::ITT_DOMAINS::instance().STORAGE2,
                         ittapi::ITT_DOMAINS::instance().MERGE_BACKEND);
                     task::tbb::syncWait(
-                        storage2::merge(m_backendStorage.get(), backStorage, fromStorage...));
+                        storage2::merge(m_backendStorage.get(), backStorage, extraStorages...));
                 },
                 [&]() {
                     ittapi::Report report(ittapi::ITT_DOMAINS::instance().STORAGE2,
                         ittapi::ITT_DOMAINS::instance().MERGE_CACHE);
                     task::tbb::syncWait(
-                        storage2::merge(m_cacheStorage.get(), backStorage, fromStorage...));
+                        storage2::merge(m_cacheStorage.get(), backStorage, extraStorages...));
                 });
         }
         else
         {
             ittapi::Report report(ittapi::ITT_DOMAINS::instance().STORAGE2,
                 ittapi::ITT_DOMAINS::instance().MERGE_BACKEND);
-            co_await storage2::merge(m_backendStorage.get(), backStorage, fromStorage...);
+            co_await storage2::merge(m_backendStorage.get(), backStorage, extraStorages...);
         }
 
         listLock.lock();
@@ -525,4 +525,4 @@ public:
     BackendStorage& backendStorage() { return m_backendStorage; }
 };
 
-}  // namespace bcos::scheduler_v1
+}  // namespace bcos::storage2
