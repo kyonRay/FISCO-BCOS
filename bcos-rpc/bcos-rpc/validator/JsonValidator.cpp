@@ -64,21 +64,10 @@ std::tuple<bool, std::string> JsonValidator::checkRequestFields(const Json::Valu
         }
         else if (item.name() == "id")
         {
-            if (!item->isUInt64())
+            // JSON-RPC 2.0 allows id to be any JSON number or string
+            if (!item->isNumeric() && !item->isString())
             {
-                if (item->isString())
-                {
-                    const static boost::regex IDRegex("^[0-9a-fA-F-]+$");
-                    if (std::string idString = item->asString();
-                        !boost::regex_match(idString, IDRegex))
-                    {
-                        return {false, "Invalid field: " + item.name()};
-                    }
-                }
-                else
-                {
-                    return {false, "Invalid field: " + item.name()};
-                }
+                return {false, "Invalid field: " + item.name()};
             }
             flag &= 0b011;
         }
