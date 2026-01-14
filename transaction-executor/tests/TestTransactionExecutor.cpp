@@ -206,6 +206,161 @@ BOOST_AUTO_TEST_CASE(costBalance)
     }());
 }
 
+BOOST_AUTO_TEST_CASE(insufficientBalanceNoLogs)
+{
+    using namespace std::string_view_literals;
+    task::syncWait([this]() mutable -> task::Task<void> {
+        // Prepare block header and enable balance features
+        bcostars::protocol::BlockHeaderImpl blockHeader;
+        blockHeader.setVersion((uint32_t)bcos::protocol::BlockVersion::V3_13_0_VERSION);
+        blockHeader.calculateHash(*cryptoSuite->hashImpl());
+
+        auto features = ledgerConfig.features();
+        features.setGenesisFeatures(protocol::BlockVersion::V3_13_0_VERSION);
+        features.set(bcos::ledger::Features::Flag::feature_balance);
+        features.set(bcos::ledger::Features::Flag::feature_balance_policy1);
+        features.set(bcos::ledger::Features::Flag::bugfix_revert_logs);
+        ledgerConfig.setFeatures(features);
+        // Set gas price high to trigger insufficient balance quickly
+        ledgerConfig.setGasPrice({"1000", 0});
+
+        // Deploy HelloWorld contract with a funded deployer
+        bcos::bytes helloworldBytecodeBinary;
+        boost::algorithm::unhex(helloworldBytecode, std::back_inserter(helloworldBytecodeBinary));
+        auto deployTx = transactionFactory.createTransaction(
+            0, "", helloworldBytecodeBinary, {}, 0, "", "", 0, std::string{}, {}, {}, 200000);
+
+        // Use a deployer with enough balance for deployment
+        auto deployer = unhexAddress("e0e794ca86d198042b64285c5ce667aee747509b"sv);
+        deployTx->forceSender(bytes(deployer.bytes, deployer.bytes + sizeof(deployer.bytes)));
+        ledger::account::EVMAccount deployerAccount(storage, deployer, false);
+        co_await deployerAccount.setBalance(100000000000);
+
+        auto deployReceipt = co_await executor.executeTransaction(
+            storage, blockHeader, *deployTx, 10, ledgerConfig, false);
+        BOOST_CHECK_EQUAL(deployReceipt->status(), 0);
+
+        // Prepare a call that would emit logs if executed successfully
+        bcos::codec::abi::ContractABICodec abiCodec(*cryptoSuite->hashImpl());
+        auto callInput = abiCodec.abiIn("logOut()");
+        auto callTx =
+            transactionFactory.createTransaction(0, std::string(deployReceipt->contractAddress()),
+                callInput, {}, 0, "", "", 0, std::string{}, {}, {}, 50000);
+
+        // Set sender balance to 1 to ensure insufficient balance
+        auto lowBalanceSender = unhexAddress("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"sv);
+        callTx->forceSender(
+            bytes(lowBalanceSender.bytes, lowBalanceSender.bytes + sizeof(lowBalanceSender.bytes)));
+        ledger::account::EVMAccount lowAccount(storage, lowBalanceSender, false);
+        co_await lowAccount.setBalance(0);
+
+        auto callReceipt = co_await executor.executeTransaction(
+            storage, blockHeader, *callTx, 11, ledgerConfig, false);
+        BOOST_CHECK_EQUAL(callReceipt->status(),
+            static_cast<int32_t>(protocol::TransactionStatus::NotEnoughCash));
+        // On failure due to insufficient balance, receipt should have no logs
+        BOOST_CHECK(callReceipt->logEntries().empty());
+    }());
+}
+
+BOOST_AUTO_TEST_CASE(revertLogsClearedWithFeature)
+{
+    // Ensure revert logs are cleared when bugfix_revert_logs is enabled
+    task::syncWait([this]() mutable -> task::Task<void> {
+        // Block header
+        bcostars::protocol::BlockHeaderImpl blockHeader;
+        blockHeader.setVersion((uint32_t)bcos::protocol::BlockVersion::MAX_VERSION);
+        blockHeader.calculateHash(*cryptoSuite->hashImpl());
+
+        // Enable the bugfix flag
+        auto features = ledgerConfig.features();
+        features.setGenesisFeatures(bcos::protocol::BlockVersion::MAX_VERSION);
+        features.set(bcos::ledger::Features::Flag::bugfix_revert_logs);
+        ledgerConfig.setFeatures(features);
+
+        // Create a simple transaction (will not be executed)
+        bcos::bytes helloworldBytecodeBinary;
+        boost::algorithm::unhex(helloworldBytecode, std::back_inserter(helloworldBytecodeBinary));
+        auto tx =
+            transactionFactory.createTransaction(0, "", helloworldBytecodeBinary, {}, 0, "", "", 0);
+
+        // Build ExecuteContext directly
+        auto execCtx = co_await executor.createExecuteContext(
+            storage, blockHeader, *tx, 100, ledgerConfig, false);
+
+        // Seed a fake log entry
+        std::vector<uint8_t> addr(20, 0);  // 20-byte address
+        bcos::h256s topics{bcos::h256{}};
+        bcos::bytes data{'a', 'b', 'c'};
+        execCtx.m_data->m_hostContext.logs().emplace_back(
+            std::move(addr), std::move(topics), std::move(data));
+
+        // Craft a revert result
+        evmc_result base{};
+        base.status_code = EVMC_REVERT;
+        base.gas_left = 0;
+        base.output_data = nullptr;
+        base.output_size = 0;
+        base.release = nullptr;
+        execCtx.m_data->m_evmcResult.emplace(base);
+        execCtx.m_data->m_evmcResult->status = bcos::protocol::TransactionStatus::RevertInstruction;
+
+        // Finish and verify logs cleared
+        auto receipt = co_await execCtx.template executeStep<2>();
+        BOOST_CHECK_NE(receipt->status(), 0);
+        BOOST_CHECK(receipt->logEntries().empty());
+    }());
+}
+
+BOOST_AUTO_TEST_CASE(revertLogsRemainWithoutFeature)
+{
+    // Verify logs remain when bugfix_revert_logs is disabled
+    task::syncWait([this]() mutable -> task::Task<void> {
+        // Block header
+        bcostars::protocol::BlockHeaderImpl blockHeader;
+        blockHeader.setVersion((uint32_t)bcos::protocol::BlockVersion::MAX_VERSION);
+        blockHeader.calculateHash(*cryptoSuite->hashImpl());
+
+        // Use a local ledgerConfig with a version prior to enabling bugfix_revert_logs
+        bcos::ledger::LedgerConfig localLedgerConfig;
+        auto localFeatures = localLedgerConfig.features();
+        localFeatures.setGenesisFeatures(bcos::protocol::BlockVersion::V3_16_0_VERSION);
+        localLedgerConfig.setFeatures(localFeatures);
+
+        // Create a simple transaction (will not be executed)
+        bcos::bytes helloworldBytecodeBinary;
+        boost::algorithm::unhex(helloworldBytecode, std::back_inserter(helloworldBytecodeBinary));
+        auto tx =
+            transactionFactory.createTransaction(0, "", helloworldBytecodeBinary, {}, 0, "", "", 0);
+
+        // Build ExecuteContext directly
+        auto execCtx = co_await executor.createExecuteContext(
+            storage, blockHeader, *tx, 101, localLedgerConfig, false);
+
+        // Seed a fake log entry
+        std::vector<uint8_t> addr(20, 1);  // non-zero 20-byte address
+        bcos::h256s topics{bcos::h256{}};
+        bcos::bytes data{'x', 'y', 'z'};
+        execCtx.m_data->m_hostContext.logs().emplace_back(
+            std::move(addr), std::move(topics), std::move(data));
+
+        // Craft a revert result
+        evmc_result base{};
+        base.status_code = EVMC_REVERT;
+        base.gas_left = 0;
+        base.output_data = nullptr;
+        base.output_size = 0;
+        base.release = nullptr;
+        execCtx.m_data->m_evmcResult.emplace(base);
+        execCtx.m_data->m_evmcResult->status = bcos::protocol::TransactionStatus::RevertInstruction;
+
+        // Finish and verify logs remain (bugfix is off)
+        auto receipt = co_await execCtx.template executeStep<2>();
+        BOOST_CHECK_NE(receipt->status(), 0);
+        BOOST_CHECK(!receipt->logEntries().empty());
+    }());
+}
+
 BOOST_AUTO_TEST_CASE(web3Nonce)
 {
     using namespace std::string_view_literals;

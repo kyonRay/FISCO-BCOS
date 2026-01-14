@@ -22,13 +22,13 @@
 #include "bcos-framework/ledger/Ledger.h"
 #include "bcos-framework/ledger/LedgerTypeDef.h"
 #include "bcos-protocol/TransactionStatus.h"
-#include "bcos-rpc/validator/TransactionValidator.h"
 #include <bcos-codec/rlp/Common.h>
 #include <bcos-codec/rlp/RLPDecode.h>
 #include <bcos-crypto/hash/Keccak256.h>
 #include <bcos-executor/src/Common.h>
 #include <bcos-rpc/Common.h>
 #include <bcos-rpc/util.h>
+#include <bcos-rpc/validator/TxValidator.h>
 #include <bcos-rpc/web3jsonrpc/Web3JsonRpcImpl.h>
 #include <bcos-rpc/web3jsonrpc/endpoints/EthMethods.h>
 #include <bcos-rpc/web3jsonrpc/model/BlockResponse.h>
@@ -435,27 +435,16 @@ task::Task<void> EthEndpoint::sendRawTransaction(const Json::Value& request, Jso
         BOOST_THROW_EXCEPTION(JsonRpcException(InvalidParams, error->errorMessage()));
     }
     auto encodeTxHash = web3Tx.txHash();
-    auto config = co_await ledger::getSystemConfig(
-        *m_nodeService->ledger(), ledger::SYSTEM_KEY_WEB3_CHAIN_ID);
-    if (!config.has_value())
-    {
-        BOOST_THROW_EXCEPTION(
-            JsonRpcException(JsonRpcError::InvalidParams, "ChainId not available!"));
-    }
-    auto [chainId, _] = config.value();
-    if (web3Tx.chainId)
-    {
-        if (auto txChainId = std::to_string(web3Tx.chainId.value()); txChainId != chainId)
-        {
-            BOOST_THROW_EXCEPTION(
-                JsonRpcException(JsonRpcError::InvalidParams, "Replayed transaction!"));
-        }
-    }
 
     auto tx = std::make_shared<bcostars::protocol::TransactionImpl>(
         [m_tx = web3Tx.takeToTarsTransaction()]() mutable { return &m_tx; });
     // check transaction validator
-    TransactionValidator::checkTransaction(*tx, true);
+    auto const checkStatus =
+        co_await bcos::rpc::TxValidator::checkSenderBalance(*tx, m_nodeService->scheduler());
+    if (checkStatus != protocol::TransactionStatus::None)
+    {
+        BOOST_THROW_EXCEPTION(JsonRpcException(InvalidParams, bcos::toString(checkStatus)));
+    }
 
 // for web3.eth.sendRawTransaction, return the hash of raw transaction
 #if 0
@@ -507,9 +496,10 @@ task::Task<void> EthEndpoint::sendRawTransaction(const Json::Value& request, Jso
 
 task::Task<void> EthEndpoint::call(const Json::Value& request, Json::Value& response)
 {
-    co_await call(request, response, nullptr);
+    co_await call(request, response, nullptr, false);
 }
-task::Task<void> EthEndpoint::call(const Json::Value& request, Json::Value& response, u256* gasUsed)
+task::Task<void> EthEndpoint::call(
+    const Json::Value& request, Json::Value& response, u256* gasUsed, bool isEstimate)
 {
     // params: transaction(TX), blockNumber(QTY|TAG)
     // result: data(DATA)
@@ -531,7 +521,8 @@ task::Task<void> EthEndpoint::call(const Json::Value& request, Json::Value& resp
         WEB3_LOG(TRACE) << LOG_DESC("eth_call") << LOG_KV("call", call)
                         << LOG_KV("blockTag", blockTag) << LOG_KV("blockNumber", blockNumber);
     }
-    auto tx = call.takeToTransaction(m_nodeService->blockFactory()->transactionFactory());
+    auto tx = call.takeToTransaction(
+        m_nodeService->blockFactory()->transactionFactory(), isEstimate ? scheduler : nullptr);
     struct Awaitable
     {
         bcos::scheduler::SchedulerInterface& m_scheduler;
@@ -605,7 +596,7 @@ task::Task<void> EthEndpoint::estimateGas(const Json::Value& request, Json::Valu
 
     u256 gasUsed;
     Json::Value callResponse;
-    co_await call(request, callResponse, std::addressof(gasUsed));
+    co_await call(request, callResponse, std::addressof(gasUsed), true);
 
     if (!callResponse.isMember("error"))
     {
