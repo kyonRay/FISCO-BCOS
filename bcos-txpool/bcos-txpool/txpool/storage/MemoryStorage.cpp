@@ -323,10 +323,15 @@ TransactionStatus MemoryStorage::verifyAndSubmitTransaction(
             return result;
         },
         [this, transaction]() {
-            // Step 2: Verify transaction signature (if enabled)
-            return m_config->checkTransactionSignature() ?
-                       m_config->txValidator()->verify(*transaction) :
-                       TransactionStatus::None;
+            // Step 2: Verify transaction signature (if enabled); always run non-signature
+            // validation (groupId, chainId, nonce, block limit, system-tx mark) regardless of
+            // signature check setting so that disabling signatures does not bypass critical
+            // validation steps (FIB-53).
+            if (m_config->checkTransactionSignature())
+            {
+                return m_config->txValidator()->verify(*transaction);
+            }
+            return m_config->txValidator()->checkTransaction(*transaction);
         },
         [this, transaction]() {
             // Step 3: Validate transaction format and constraints
