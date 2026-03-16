@@ -27,6 +27,7 @@
 #include <oneapi/tbb/parallel_for.h>
 #include <oneapi/tbb/parallel_for_each.h>
 #include <oneapi/tbb/rw_mutex.h>
+#include <atomic>
 #include <concepts>
 #include <optional>
 #include <random>
@@ -179,16 +180,37 @@ private:
     }
 
     std::vector<typename BucketType::Ptr> m_buckets;
+    // FIB-62: atomic size counter to avoid data races in BucketMap::size()
+    std::atomic<size_t> m_size{0};
 
 public:
     using Ptr = std::shared_ptr<BucketMap>;
     using WriteAccessor = typename BucketType::WriteAccessor;
     using ReadAccessor = typename BucketType::ReadAccessor;
 
-    BucketMap(const BucketMap&) = default;
-    BucketMap(BucketMap&&) noexcept = default;
-    BucketMap& operator=(const BucketMap&) = default;
-    BucketMap& operator=(BucketMap&&) noexcept = default;
+    // std::atomic is not copyable/movable, so we provide explicit ctors/assignment
+    BucketMap(const BucketMap& other) : m_buckets(other.m_buckets), m_size(other.m_size.load()) {}
+    BucketMap(BucketMap&& other) noexcept
+      : m_buckets(std::move(other.m_buckets)), m_size(other.m_size.load())
+    {}
+    BucketMap& operator=(const BucketMap& other)
+    {
+        if (this != &other)
+        {
+            m_buckets = other.m_buckets;
+            m_size.store(other.m_size.load());
+        }
+        return *this;
+    }
+    BucketMap& operator=(BucketMap&& other) noexcept
+    {
+        if (this != &other)
+        {
+            m_buckets = std::move(other.m_buckets);
+            m_size.store(other.m_size.load());
+        }
+        return *this;
+    }
     BucketMap(size_t bucketSize)
     {
         m_buckets.reserve(bucketSize);
@@ -262,7 +284,11 @@ public:
             [&](WriteAccessor& accessor, const auto& range, BucketType& bucket) {
                 for (auto index : range)
                 {
-                    bucket.insert(accessor, keyValues[index]);
+                    // FIB-62: track size atomically
+                    if (bucket.insert(accessor, keyValues[index]))
+                    {
+                        ++m_size;
+                    }
                 }
             });
     }
@@ -298,6 +324,7 @@ public:
                     if (bucket.find(accessor, keys[index]))
                     {
                         bucket.remove(accessor);
+                        --m_size;  // FIB-62: track size atomically
                     }
                 }
             });
@@ -307,20 +334,22 @@ public:
     {
         auto idx = getBucketIndex(keyValue.first);
         auto& bucket = m_buckets[idx];
-        return bucket->insert(accessor, std::move(keyValue));
-    }
-
-    void remove(WriteAccessor& accessor) { accessor.bucket()->remove(accessor); }
-
-    size_t size() const
-    {
-        size_t size = 0;
-        for (const auto& bucket : m_buckets)
+        bool inserted = bucket->insert(accessor, std::move(keyValue));
+        if (inserted)
         {
-            size += bucket->size();
+            ++m_size;  // FIB-62: track size atomically
         }
-        return size;
+        return inserted;
     }
+
+    void remove(WriteAccessor& accessor)
+    {
+        accessor.bucket()->remove(accessor);
+        --m_size;  // FIB-62: track size atomically
+    }
+
+    // FIB-62: return atomic counter instead of summing all buckets without locks
+    size_t size() const { return m_size.load(std::memory_order_relaxed); }
 
     bool empty() const { return size() == 0; }
 
@@ -343,6 +372,7 @@ public:
         {
             bucket->clear();
         }
+        m_size.store(0, std::memory_order_relaxed);  // FIB-62: reset atomic counter
     }
 
     template <class AccessorType>
@@ -416,6 +446,10 @@ public:
                 for (auto index : range)
                 {
                     bool inserted = bucket.insert(accessor, {keys[index], EmptyType()});
+                    if (inserted)
+                    {
+                        ++this->m_size;  // FIB-62: track size atomically
+                    }
                     if constexpr (returnInsertResult)
                     {
                         if (inserted)
