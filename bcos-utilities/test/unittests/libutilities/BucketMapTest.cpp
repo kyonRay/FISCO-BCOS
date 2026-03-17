@@ -491,6 +491,86 @@ BOOST_AUTO_TEST_CASE(bucketSetBatchInsertReturn)
     }
 }
 
+BOOST_AUTO_TEST_CASE(FIB62_AtomicSizeAccuracy)
+{
+    // FIB-62: BucketMap::size() used to sum all bucket sizes without a lock, which is a
+    // data race under concurrent modification. The fix tracks size via std::atomic<size_t>
+    // updated by insert/remove/batchInsert/batchRemove/clear.
+    using BKMap = bcos::BucketMap<std::string, int, std::hash<std::string>>;
+    using WriteAccessor = BKMap::WriteAccessor;
+
+    // Serial correctness: insert, remove, clear
+    {
+        BKMap m(16);
+        BOOST_CHECK_EQUAL(m.size(), 0);
+
+        for (int i = 0; i < 100; ++i)
+        {
+            WriteAccessor acc;
+            m.insert(acc, {std::to_string(i), i});
+        }
+        BOOST_CHECK_EQUAL(m.size(), 100);
+
+        for (int i = 0; i < 30; ++i)
+        {
+            WriteAccessor acc;
+            if (m.find<WriteAccessor>(acc, std::to_string(i)))
+            {
+                m.remove(acc);
+            }
+        }
+        BOOST_CHECK_EQUAL(m.size(), 70);
+
+        m.clear();
+        BOOST_CHECK_EQUAL(m.size(), 0);
+    }
+
+    // Parallel insert: atomic counter must stay consistent
+    {
+        BKMap m(16);
+        tbb::parallel_for(tbb::blocked_range<int>(0, 1000), [&](const auto& range) {
+            for (int i = range.begin(); i < range.end(); ++i)
+            {
+                WriteAccessor acc;
+                m.insert(acc, {std::to_string(i), i});
+            }
+        });
+        BOOST_CHECK_EQUAL(m.size(), 1000);
+    }
+
+    // Duplicate inserts must not change size
+    {
+        BKMap m(8);
+        WriteAccessor acc1;
+        m.insert(acc1, {"dup_key", 1});
+        BOOST_CHECK_EQUAL(m.size(), 1);
+        WriteAccessor acc2;
+        bool inserted = m.insert(acc2, {"dup_key", 2});
+        BOOST_CHECK(!inserted);
+        BOOST_CHECK_EQUAL(m.size(), 1);
+    }
+
+    // batchInsert and batchRemove maintain size correctly
+    {
+        BKMap m(16);
+        std::vector<std::pair<std::string, int>> kvPairs;
+        for (int i = 0; i < 500; ++i)
+        {
+            kvPairs.emplace_back(std::to_string(i), i);
+        }
+        m.batchInsert(kvPairs);
+        BOOST_CHECK_EQUAL(m.size(), 500);
+
+        std::vector<std::string> keysToRemove;
+        for (int i = 0; i < 200; ++i)
+        {
+            keysToRemove.push_back(std::to_string(i));
+        }
+        m.batchRemove(keysToRemove);
+        BOOST_CHECK_EQUAL(m.size(), 300);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 }  // namespace test
 }  // namespace bcos
