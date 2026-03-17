@@ -628,4 +628,74 @@ BOOST_AUTO_TEST_CASE(VerifyAndSubmitTransactionValidationChain)
     }
 }
 
+BOOST_AUTO_TEST_CASE(FIB53_CheckSigFalseStillValidates)
+{
+    // FIB-53: When checkSig=false the old code returned None immediately from step 2,
+    // bypassing checkTransaction() (nonce, group-id, chain-id). The fix always calls
+    // checkTransaction() when checkSig is off so that format validation still fires.
+    // This test confirms that validateTransaction() (step 3) catches format violations
+    // even when signature verification is disabled.
+
+    auto hashImpl = std::make_shared<Keccak256>();
+    auto signatureImpl = std::make_shared<Secp256k1Crypto>();
+    auto cryptoSuite = std::make_shared<CryptoSuite>(hashImpl, signatureImpl, nullptr);
+
+    fakeit::Mock<bcos::txpool::Web3NonceChecker> mockW3;
+    fakeit::When(Method(mockW3, insertMemoryNonce)).AlwaysDo([](auto, auto) -> task::Task<void> {
+        co_return;
+    });
+    fakeit::When(OverloadedMethod(mockW3, checkWeb3Nonce,
+                     task::Task<TransactionStatus>(const bcos::protocol::Transaction&, bool)))
+        .AlwaysDo([](const auto&, auto) -> task::Task<TransactionStatus> {
+            co_return TransactionStatus::None;
+        });
+    fakeit::When(OverloadedMethod(mockW3, checkWeb3Nonce,
+                     task::Task<TransactionStatus>(std::string_view, std::string_view, bool)))
+        .AlwaysDo([](auto, auto, auto) -> task::Task<TransactionStatus> {
+            co_return TransactionStatus::None;
+        });
+    std::shared_ptr<bcos::txpool::Web3NonceChecker> w3(
+        &mockW3.get(), [](bcos::txpool::Web3NonceChecker*) {});
+
+    auto realValidator = std::make_shared<TxValidator>(txPoolNonceChecker, w3, cryptoSuite, "g",
+        "c", std::weak_ptr<bcos::scheduler::SchedulerInterface>{});
+    auto lnc = std::make_shared<LedgerNonceChecker>(nullptr, 0, 1000, /*checkBlockLimit*/ false);
+    realValidator->setLedgerNonceChecker(lnc);
+
+    // checkSig=false: signature step is skipped, but format validation must still run
+    auto cfgNoSig = std::make_shared<TxPoolConfig>(realValidator, nullptr, nullptr, nullptr,
+        txPoolNonceChecker, 1000, 1024, /*checkSig=*/false);
+    MemoryStorage storNoSig(cfgNoSig);
+
+    const std::string senderHex = "0x1234567890123456789012345678901234567890";
+
+    // Case 1: Web3 tx with overflow value must be rejected even without sig check
+    auto txBadVal = makeWeb3Tx("0x11", senderHex, false);
+    auto txBadValImpl = std::dynamic_pointer_cast<bcostars::protocol::TransactionImpl>(txBadVal);
+    if (txBadValImpl)
+    {
+        std::string bigVal(TRANSACTION_VALUE_MAX_LENGTH + 1, '1');
+        txBadValImpl->mutableInner().data.value.assign(bigVal.begin(), bigVal.end());
+    }
+    auto r1 = storNoSig.verifyAndSubmitTransaction(txBadVal, nullptr, false, false);
+    BOOST_CHECK_EQUAL(r1, TransactionStatus::OverFlowValue);
+
+    // Case 2: Web3 tx with oversized input (contract creation) must also be rejected
+    auto txBadInput = makeWeb3Tx("0x22", senderHex, false);
+    auto txBadInputImpl =
+        std::dynamic_pointer_cast<bcostars::protocol::TransactionImpl>(txBadInput);
+    if (txBadInputImpl)
+    {
+        std::string bigInput(MAX_INITCODE_SIZE + 1, '1');
+        txBadInputImpl->mutableInner().data.input.assign(bigInput.begin(), bigInput.end());
+    }
+    auto r2 = storNoSig.verifyAndSubmitTransaction(txBadInput, nullptr, false, false);
+    BOOST_CHECK_EQUAL(r2, TransactionStatus::MaxInitCodeSizeExceeded);
+
+    // Sanity: a well-formed Web3 tx passes
+    auto txGood = makeWeb3Tx("0x33", senderHex, false);
+    auto r3 = storNoSig.verifyAndSubmitTransaction(txGood, nullptr, false, false);
+    BOOST_CHECK_EQUAL(r3, TransactionStatus::None);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
