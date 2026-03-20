@@ -19,6 +19,7 @@
  * @date 2021-05-11
  */
 #pragma once
+#include "bcos-executor/src/precompiled/common/Utilities.h"
 #include "bcos-txpool/txpool/interfaces/NonceCheckerInterface.h"
 #include "bcos-txpool/txpool/interfaces/TxValidatorInterface.h"
 #include <bcos-framework/dispatcher/SchedulerInterface.h>
@@ -27,6 +28,7 @@
 #include <bcos-task/Task.h>
 #include <bcos-txpool/txpool/validator/Web3NonceChecker.h>
 #include <bcos-utilities/DataConvertUtility.h>
+#include <algorithm>
 
 namespace bcos::txpool
 {
@@ -79,7 +81,23 @@ public:
 protected:
     virtual bool isSystemTransaction(const bcos::protocol::Transaction& _tx)
     {
-        return precompiled::contains(bcos::precompiled::c_systemTxsAddress, _tx.to());
+        if (_tx.type() == static_cast<uint8_t>(bcos::protocol::TransactionType::BCOSTransaction))
+            [[likely]]
+        {
+            return precompiled::contains(bcos::precompiled::c_systemTxsAddress, _tx.to());
+        }
+        // Normalize: strip 0x/0X prefix and convert to lowercase to match
+        // c_systemTxsAddress entries (unprefixed, lowercase hex)
+        auto to = precompiled::trimHexPrefix(_tx.to());
+        // deployment
+        if (to.empty()) [[unlikely]]
+        {
+            return false;
+        }
+        std::string lower = std::string(to);
+        boost::algorithm::to_lower(lower);
+        to = std::string_view(lower);
+        return precompiled::contains(bcos::precompiled::c_systemTxsAddress, to);
     }
 
 private:
