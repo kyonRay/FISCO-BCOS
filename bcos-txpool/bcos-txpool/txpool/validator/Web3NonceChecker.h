@@ -91,8 +91,7 @@ public:
     /**
      * batch insert sender and nonce into ledger state nonce and memory nonce, call when block is
      * committed
-     * @param senders sender string list
-     * @param noncesSet nonce u256 set
+     * @param senderNonces sender and nonce set list
      */
     task::Task<void> updateNonceCache(::ranges::input_range auto senderNonces)
     {
@@ -162,6 +161,9 @@ public:
             }
             co_await storage2::removeOne(m_memoryNonces, std::make_pair(sender, nonce));
         }
+        // Clear stale m_maxNonces for affected senders so getPendingNonce()
+        // falls through to the ledger nonce instead of returning inflated values
+        co_await storage2::removeSome(m_maxNonces, senders);
         TXPOOL_LOG(DEBUG) << LOG_DESC("Web3Nonce: rm mem nonce cache for invalid txs.") << ss.str();
     }
 
