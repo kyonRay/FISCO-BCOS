@@ -211,7 +211,7 @@ public:
         }
         return *this;
     }
-    BucketMap(size_t bucketSize)
+    explicit BucketMap(size_t bucketSize)
     {
         m_buckets.reserve(bucketSize);
         for (size_t i = 0; i < bucketSize; i++)
@@ -287,7 +287,7 @@ public:
                     // FIB-62: track size atomically
                     if (bucket.insert(accessor, keyValues[index]))
                     {
-                        ++m_size;
+                        m_size.fetch_add(1, std::memory_order_relaxed);
                     }
                 }
             });
@@ -324,7 +324,8 @@ public:
                     if (bucket.find(accessor, keys[index]))
                     {
                         bucket.remove(accessor);
-                        --m_size;  // FIB-62: track size atomically
+                        m_size.fetch_sub(1, std::memory_order_relaxed);  // FIB-62: track size
+                                                                         // atomically
                     }
                 }
             });
@@ -337,7 +338,7 @@ public:
         bool inserted = bucket->insert(accessor, std::move(keyValue));
         if (inserted)
         {
-            ++m_size;  // FIB-62: track size atomically
+            m_size.fetch_add(1, std::memory_order_relaxed);  // FIB-62: track size atomically
         }
         return inserted;
     }
@@ -345,7 +346,7 @@ public:
     void remove(WriteAccessor& accessor)
     {
         accessor.bucket()->remove(accessor);
-        --m_size;  // FIB-62: track size atomically
+        m_size.fetch_sub(1, std::memory_order_relaxed);  // FIB-62: track size atomically
     }
 
     // FIB-62: return atomic counter instead of summing all buckets without locks
@@ -448,7 +449,8 @@ public:
                     bool inserted = bucket.insert(accessor, {keys[index], EmptyType()});
                     if (inserted)
                     {
-                        ++this->m_size;  // FIB-62: track size atomically
+                        this->m_size.fetch_add(1, std::memory_order_relaxed);  // FIB-62: track size
+                                                                               // atomically
                     }
                     if constexpr (returnInsertResult)
                     {
