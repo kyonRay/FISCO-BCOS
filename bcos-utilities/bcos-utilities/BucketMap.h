@@ -180,6 +180,8 @@ private:
     }
 
     std::vector<typename BucketType::Ptr> m_buckets;
+
+protected:
     // FIB-62: atomic size counter to avoid data races in BucketMap::size()
     std::atomic<size_t> m_size{0};
 
