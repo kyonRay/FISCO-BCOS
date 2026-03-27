@@ -133,6 +133,25 @@ bcos::executor_v1::EVMCResult bcos::executor_v1::makeErrorEVMCResult(crypto::Has
     protocol::TransactionStatus status, evmc_status_code evmStatus, int64_t gas,
     const std::string& errorInfo)
 {
+    int64_t gasLeft = gas;
+    switch (evmStatus)
+    {
+    case EVMC_OUT_OF_GAS:
+    case EVMC_INTERNAL_ERROR:
+    case EVMC_STACK_OVERFLOW:
+    case EVMC_STACK_UNDERFLOW:
+    case EVMC_INVALID_INSTRUCTION:
+    case EVMC_UNDEFINED_INSTRUCTION:
+    case EVMC_BAD_JUMP_DESTINATION:
+    case EVMC_INVALID_MEMORY_ACCESS:
+        gasLeft = 0;
+        break;
+    default:
+        break;
+    }
+    if (gasLeft < 0)
+        gasLeft = 0;
+
     bytes errorBytes;
     if (!errorInfo.empty())
     {
@@ -155,7 +174,7 @@ bcos::executor_v1::EVMCResult bcos::executor_v1::makeErrorEVMCResult(crypto::Has
 
     return EVMCResult{
         evmc_result{.status_code = evmStatus,
-            .gas_left = gas,
+            .gas_left = gasLeft,
             .gas_refund = 0,
             .output_data = output.release(),
             .output_size = outputSize,

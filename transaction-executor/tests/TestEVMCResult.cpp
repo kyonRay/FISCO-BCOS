@@ -276,7 +276,7 @@ BOOST_AUTO_TEST_CASE(testMakeErrorEVMCResult)
             *hashImpl, TransactionStatus::OutOfGas, EVMC_OUT_OF_GAS, 100, errorInfo);
 
         BOOST_CHECK_EQUAL(result.status_code, EVMC_OUT_OF_GAS);
-        BOOST_CHECK_EQUAL(result.gas_left, 100);
+        BOOST_CHECK_EQUAL(result.gas_left, 0);  // gas clamped to 0 for EVMC_OUT_OF_GAS
         BOOST_CHECK_EQUAL(result.status, TransactionStatus::OutOfGas);
         BOOST_CHECK_GT(result.output_size, 0);
         BOOST_CHECK_NE(result.output_data, nullptr);
@@ -289,7 +289,7 @@ BOOST_AUTO_TEST_CASE(testMakeErrorEVMCResult)
             *hashImpl, TransactionStatus::OutOfStack, EVMC_STACK_OVERFLOW, 50, "");
 
         BOOST_CHECK_EQUAL(result.status_code, EVMC_STACK_OVERFLOW);
-        BOOST_CHECK_EQUAL(result.gas_left, 50);
+        BOOST_CHECK_EQUAL(result.gas_left, 0);  // gas clamped to 0 for EVMC_STACK_OVERFLOW
         BOOST_CHECK_EQUAL(result.status, TransactionStatus::OutOfStack);
         BOOST_CHECK_GT(result.output_size, 0);
         BOOST_CHECK_NE(result.output_data, nullptr);
@@ -446,6 +446,42 @@ BOOST_AUTO_TEST_CASE(testResourceManagement)
 
         // Only result2 should clean up the data when destructed
     }
+}
+
+BOOST_AUTO_TEST_CASE(makeErrorEVMCResult_outOfGas_zeroGasLeft)
+{
+    auto result =
+        makeErrorEVMCResult(*hashImpl, TransactionStatus::OutOfGas, EVMC_OUT_OF_GAS, 100000, "");
+
+    BOOST_CHECK_EQUAL(result.status_code, EVMC_OUT_OF_GAS);
+    BOOST_CHECK_EQUAL(result.gas_left, 0);
+}
+
+BOOST_AUTO_TEST_CASE(makeErrorEVMCResult_revert_preservesGas)
+{
+    auto result = makeErrorEVMCResult(
+        *hashImpl, TransactionStatus::RevertInstruction, EVMC_REVERT, 50000, "");
+
+    BOOST_CHECK_EQUAL(result.status_code, EVMC_REVERT);
+    BOOST_CHECK_EQUAL(result.gas_left, 50000);
+}
+
+BOOST_AUTO_TEST_CASE(makeErrorEVMCResult_internalError_zeroGasLeft)
+{
+    auto result =
+        makeErrorEVMCResult(*hashImpl, TransactionStatus::Unknown, EVMC_INTERNAL_ERROR, 100000, "");
+
+    BOOST_CHECK_EQUAL(result.status_code, EVMC_INTERNAL_ERROR);
+    BOOST_CHECK_EQUAL(result.gas_left, 0);
+}
+
+BOOST_AUTO_TEST_CASE(makeErrorEVMCResult_negativeGas_clampedToZero)
+{
+    auto result =
+        makeErrorEVMCResult(*hashImpl, TransactionStatus::RevertInstruction, EVMC_REVERT, -100, "");
+
+    BOOST_CHECK_EQUAL(result.status_code, EVMC_REVERT);
+    BOOST_CHECK_EQUAL(result.gas_left, 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
