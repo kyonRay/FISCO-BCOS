@@ -123,7 +123,7 @@ evmc_address unhexAddress(std::string_view view)
     {
         return {};
     }
-    if (view.starts_with("0x"))
+    if (view.starts_with("0x") || view.starts_with("0X"))
     {
         view = view.substr(2);
     }
