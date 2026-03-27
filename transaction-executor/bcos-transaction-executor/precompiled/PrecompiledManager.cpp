@@ -143,3 +143,32 @@ bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::get
 
     return nullptr;
 }
+
+// FIB-84: feature-aware lookup
+bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::getPrecompiled(
+    unsigned long contractAddress, const ledger::Features& features) const
+{
+    auto* precompiled = getPrecompiled(contractAddress);
+    if (precompiled != nullptr)
+    {
+        if (auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
+        {
+            return nullptr;
+        }
+    }
+    return precompiled;
+}
+
+bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::getPrecompiled(
+    const evmc_address& address, const ledger::Features& features) const
+{
+    auto* precompiled = getPrecompiled(address);
+    if (precompiled != nullptr)
+    {
+        if (auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
+        {
+            return nullptr;
+        }
+    }
+    return precompiled;
+}
