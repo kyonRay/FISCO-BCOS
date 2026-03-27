@@ -64,11 +64,29 @@ struct EVMHostInterface
         assert(!concepts::bytebuffer::equalTo(addr->bytes, executor::EMPTY_EVM_ADDRESS.bytes));
         auto& hostContext = static_cast<HostContextType&>(*context);
 
-        auto status = EVMC_STORAGE_MODIFIED;
-        if (concepts::bytebuffer::equalTo(value->bytes, executor::EMPTY_EVM_BYTES32.bytes))
+        // Read existing value to determine correct storage status
+        auto existingValue = syncWait(hostContext.get(key));
+        bool existingIsZero =
+            concepts::bytebuffer::equalTo(existingValue.bytes, executor::EMPTY_EVM_BYTES32.bytes);
+        bool newIsZero =
+            concepts::bytebuffer::equalTo(value->bytes, executor::EMPTY_EVM_BYTES32.bytes);
+
+        evmc_storage_status status;
+        if (newIsZero)
         {
-            status = EVMC_STORAGE_DELETED;
+            if (existingIsZero)
+                status = EVMC_STORAGE_ASSIGNED;  // zero -> zero: no change
+            else
+                status = EVMC_STORAGE_DELETED;  // non-zero -> zero: deletion
         }
+        else
+        {
+            if (existingIsZero)
+                status = EVMC_STORAGE_ADDED;  // zero -> non-zero: new storage
+            else
+                status = EVMC_STORAGE_MODIFIED;  // non-zero -> non-zero: modification
+        }
+
         syncWait(hostContext.set(key, value));
         return status;
     }
