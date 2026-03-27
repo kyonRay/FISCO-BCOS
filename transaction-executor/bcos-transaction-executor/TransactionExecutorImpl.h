@@ -111,13 +111,15 @@ public:
             }
             else if constexpr (step == 1)
             {
+                // FIB-75: save pre-nonce savepoint for full rollback on insufficient balance
+                auto preNonceSavepoint = m_data->m_rollbackableStorage.current();
                 auto updated = co_await updateNonce();
                 if (updated)
                 {
                     m_data->m_startSavepoint = m_data->m_rollbackableStorage.current();
                 }
                 m_data->m_evmcResult.emplace(co_await m_data->m_hostContext.execute());
-                co_await consumeBalance();
+                co_await consumeBalance(preNonceSavepoint);
             }
             else if constexpr (step == 2)
             {
@@ -151,7 +153,7 @@ public:
             co_return false;
         }
 
-        task::Task<void> consumeBalance()
+        task::Task<void> consumeBalance(typename Rollbackable<Storage>::Savepoint preNonceSavepoint)
         {
             auto& evmcResult = *m_data->m_evmcResult;
             m_data->m_gasUsed = m_data->m_gasLimit - evmcResult.gas_left;
@@ -183,7 +185,18 @@ public:
                         evmcResult.output_size = 0;
                         evmcResult.release = nullptr;
                         evmcResult.create_address = {};
-                        co_await m_data->m_rollbackableStorage.rollback(m_data->m_startSavepoint);
+                        // FIB-75: full rollback including nonce, then re-apply nonce
+                        if (m_data->m_ledgerConfig.get().features().get(
+                                ledger::Features::Flag::bugfix_gas_payment_nonce_rollback))
+                        {
+                            co_await m_data->m_rollbackableStorage.rollback(preNonceSavepoint);
+                            co_await updateNonce();
+                        }
+                        else
+                        {
+                            co_await m_data->m_rollbackableStorage.rollback(
+                                m_data->m_startSavepoint);
+                        }
                     }
                     else
                     {
