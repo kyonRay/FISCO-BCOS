@@ -500,4 +500,79 @@ BOOST_AUTO_TEST_CASE(mixedOperationsRollback)
     }());
 }
 
+BOOST_AUTO_TEST_CASE(rollbackCleansRecords)
+{
+    // FIB-71: Verify that rollback properly cleans m_records (no moved-from leftovers)
+    task::syncWait([]() -> task::Task<void> {
+        MutableStorage memoryStorage;
+        Rollbackable rollbackableStorage(memoryStorage);
+
+        std::string_view tableID = "table1";
+        auto savepoint = rollbackableStorage.current();
+        BOOST_CHECK_EQUAL(savepoint, 0);
+
+        // Write several entries
+        co_await storage2::writeOne(
+            rollbackableStorage, StateKey{tableID, "Key1"sv}, storage::Entry{"Value1"});
+        co_await storage2::writeOne(
+            rollbackableStorage, StateKey{tableID, "Key2"sv}, storage::Entry{"Value2"});
+        co_await storage2::writeOne(
+            rollbackableStorage, StateKey{tableID, "Key3"sv}, storage::Entry{"Value3"});
+
+        // current() should reflect the number of records
+        BOOST_CHECK_EQUAL(rollbackableStorage.current(), 3);
+
+        // Rollback to the original savepoint
+        co_await rollbackableStorage.rollback(savepoint);
+
+        // After rollback, current() must be back to 0 (no leftover records)
+        BOOST_CHECK_EQUAL(rollbackableStorage.current(), 0);
+
+        // Verify the data has been removed
+        auto v1 = co_await storage2::readOne(rollbackableStorage, StateKey{tableID, "Key1"sv});
+        auto v2 = co_await storage2::readOne(rollbackableStorage, StateKey{tableID, "Key2"sv});
+        auto v3 = co_await storage2::readOne(rollbackableStorage, StateKey{tableID, "Key3"sv});
+        BOOST_CHECK(!v1);
+        BOOST_CHECK(!v2);
+        BOOST_CHECK(!v3);
+    }());
+}
+
+BOOST_AUTO_TEST_CASE(rollbackPartialCleansRecords)
+{
+    // FIB-71: Verify partial rollback leaves exactly the right number of records
+    task::syncWait([]() -> task::Task<void> {
+        MutableStorage memoryStorage;
+        Rollbackable rollbackableStorage(memoryStorage);
+
+        std::string_view tableID = "table1";
+
+        co_await storage2::writeOne(
+            rollbackableStorage, StateKey{tableID, "Key1"sv}, storage::Entry{"Value1"});
+        auto midpoint = rollbackableStorage.current();
+        BOOST_CHECK_EQUAL(midpoint, 1);
+
+        co_await storage2::writeOne(
+            rollbackableStorage, StateKey{tableID, "Key2"sv}, storage::Entry{"Value2"});
+        co_await storage2::writeOne(
+            rollbackableStorage, StateKey{tableID, "Key3"sv}, storage::Entry{"Value3"});
+        BOOST_CHECK_EQUAL(rollbackableStorage.current(), 3);
+
+        // Partial rollback to midpoint
+        co_await rollbackableStorage.rollback(midpoint);
+
+        // Should have exactly 1 record remaining
+        BOOST_CHECK_EQUAL(rollbackableStorage.current(), 1);
+
+        // Key1 should still exist, Key2 and Key3 should be gone
+        auto v1 = co_await storage2::readOne(rollbackableStorage, StateKey{tableID, "Key1"sv});
+        auto v2 = co_await storage2::readOne(rollbackableStorage, StateKey{tableID, "Key2"sv});
+        auto v3 = co_await storage2::readOne(rollbackableStorage, StateKey{tableID, "Key3"sv});
+        BOOST_CHECK(v1);
+        BOOST_CHECK_EQUAL(v1->get(), "Value1");
+        BOOST_CHECK(!v2);
+        BOOST_CHECK(!v3);
+    }());
+}
+
 BOOST_AUTO_TEST_SUITE_END()

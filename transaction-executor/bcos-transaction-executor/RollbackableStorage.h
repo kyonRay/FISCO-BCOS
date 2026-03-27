@@ -36,14 +36,10 @@ public:
 
     task::Task<void> rollback(Savepoint savepoint)
     {
-        if (m_records.empty())
+        while (static_cast<Savepoint>(m_records.size()) > savepoint)
         {
-            co_return;
-        }
-        for (auto index = static_cast<int64_t>(m_records.size()); index > savepoint; --index)
-        {
-            assert(index > 0);
-            auto& record = m_records[index - 1];
+            auto record = std::move(m_records.back());
+            m_records.pop_back();
             if (record.oldValue)
             {
                 co_await storage2::writeOne(
@@ -51,10 +47,9 @@ public:
             }
             else
             {
-                co_await storage2::removeOne(
-                    m_storage.get(), std::move(record.key), storage2::DIRECT);
+                // FIB-72: use non-DIRECT remove to write tombstone instead of physical delete
+                co_await storage2::removeOne(m_storage.get(), std::move(record.key));
             }
-            m_records.pop_back();
         }
     }
 
