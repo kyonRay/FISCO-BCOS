@@ -15,9 +15,9 @@
  * threads it should allow to run simultaneously.") (since ethereum use 2, we
  * modify io_service from 1 to 2) 2.
  */
+#include "bcos-gateway/libnetwork/Host.h"
 #include "bcos-gateway/libnetwork/ASIOInterface.h"
 #include "bcos-gateway/libnetwork/Common.h"
-#include "bcos-gateway/libnetwork/Host.h"
 #include "bcos-gateway/libnetwork/Session.h"
 #include "bcos-gateway/libnetwork/SocketFace.h"
 #include <boost/algorithm/string.hpp>
@@ -383,6 +383,8 @@ void Host::startPeerSession(P2PInfo const& p2pInfo, std::shared_ptr<SocketFace> 
     std::shared_ptr<SessionFace> session =
         m_sessionFactory->createSession(*this, socket, m_messageFactory, m_sessionCallbackManager);
 
+    if (!m_run)
+        return;
     m_taskArena.execute([&]() {
         m_asyncGroup.run([weakHost, session = std::move(session), p2pInfo]() {
             auto host = weakHost.lock();
@@ -487,6 +489,8 @@ void Host::asyncConnect(NodeIPEndpoint const& _nodeIPEndpoint,
                                 << LOG_KV("message", ec.message());
                 socket->close();
 
+                if (!m_run)
+                    return;
                 m_taskArena.execute([&]() {
                     m_asyncGroup.run([callback = std::move(callback)]() {
                         callback(NetworkException(ConnectError, "Connect failed"), {}, {});
@@ -570,6 +574,7 @@ void Host::stop()
     {
         m_asioInterface->stop();
     }
+    m_asyncGroup.cancel();
     m_asyncGroup.wait();
 }
 bcos::gateway::Host::Host(bcos::crypto::Hash::Ptr _hash,

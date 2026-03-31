@@ -102,8 +102,8 @@ void FrontService::start()
 
     // try to getNodeIDs from gateway
     auto self = std::weak_ptr<FrontService>(shared_from_this());
-    m_gatewayInterface->asyncGetGroupNodeInfo(
-        m_groupID, [self](const Error::Ptr& _error, const bcos::gateway::GroupNodeInfo::Ptr& _groupNodeInfo) {
+    m_gatewayInterface->asyncGetGroupNodeInfo(m_groupID,
+        [self](const Error::Ptr& _error, const bcos::gateway::GroupNodeInfo::Ptr& _groupNodeInfo) {
             if (_error)
             {
                 FRONT_LOG(ERROR) << LOG_BADGE("start") << LOG_DESC("asyncGetGroupNodeInfo failed")
@@ -189,6 +189,9 @@ void FrontService::stop()
         {
             m_frontServiceThread->join();
         }
+
+        m_asyncGroup.cancel();
+        m_asyncGroup.wait();
     }
     catch (const std::exception& e)
     {
@@ -219,6 +222,8 @@ void FrontService::asyncGetGroupNodeInfo(GetGroupNodeInfoFunc _onGetGroupNodeInf
                             (groupNodeInfo ? groupNodeInfo->nodeIDList().size() : 0));
     if (_onGetGroupNodeInfo)
     {
+        if (!m_run)
+            return;
         m_taskArena.execute([&]() {
             m_asyncGroup.run([_onGetGroupNodeInfo = std::move(_onGetGroupNodeInfo),
                                  groupNodeInfo = std::move(groupNodeInfo)]() {
@@ -367,6 +372,14 @@ void FrontService::onReceiveGroupNodeInfo(const std::string& _groupID,
 
     auto self = std::weak_ptr<FrontService>(shared_from_this());
 
+    if (!m_run)
+    {
+        if (_receiveMsgCallback)
+        {
+            _receiveMsgCallback(nullptr);
+        }
+        return;
+    }
     m_taskArena.execute([&]() {
         m_asyncGroup.run([this, _groupID, _groupNodeInfo = std::move(_groupNodeInfo)]() {
             notifyGroupNodeInfo(_groupID, _groupNodeInfo);
@@ -470,6 +483,8 @@ void FrontService::handleCallback(bcos::Error::Ptr _error, bytesConstRef _payLoa
     // construct shared_ptr<bytes> from message->payload() first for
     // thead safe
     auto buffer = bytes(_payLoad.begin(), _payLoad.end());
+    if (!m_run)
+        return;
     m_taskArena.execute([&]() {
         m_asyncGroup.run([_uuid, _error = std::move(_error), callback = std::move(callback),
                              buffer = std::move(buffer), _nodeID = std::move(_nodeID),
@@ -524,6 +539,8 @@ void FrontService::onReceiveMessage(const std::string& _groupID,
                 // thead safe
                 bytes buffer(message->payload().begin(), message->payload().end());
 
+                if (!m_run)
+                    return;
                 m_taskArena.execute([&]() mutable {
                     m_asyncGroup.run(
                         [uuid, callback = std::move(callback), buffer = std::move(buffer),
@@ -547,6 +564,8 @@ void FrontService::onReceiveMessage(const std::string& _groupID,
 
     if (_receiveMsgCallback)
     {
+        if (!m_run)
+            return;
         m_taskArena.execute([&]() mutable {
             m_asyncGroup.run([_receiveMsgCallback = std::move(_receiveMsgCallback)]() {
                 _receiveMsgCallback(nullptr);
@@ -625,6 +644,8 @@ void FrontService::onMessageTimeout(const boost::system::error_code& _error,
         if (callback)
         {
             auto errorPtr = BCOS_ERROR_PTR(CommonError::TIMEOUT, "timeout");
+            if (!m_run)
+                return;
             m_taskArena.execute([&]() {
                 m_asyncGroup.run(
                     [_uuid, _nodeID = std::move(_nodeID), callback = std::move(callback),

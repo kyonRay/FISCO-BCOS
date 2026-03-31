@@ -28,6 +28,7 @@
 #include <oneapi/tbb/task_arena.h>
 #include <oneapi/tbb/task_group.h>
 #include <boost/asio.hpp>
+#include <atomic>
 #include <utility>
 
 namespace bcos::front
@@ -280,7 +281,7 @@ private:
         m_module2GroupNodeInfoNotifier;
 
     // service is running or not
-    bool m_run = false;
+    std::atomic_bool m_run = {false};
     //
     std::shared_ptr<std::thread> m_frontServiceThread;
     // NodeID

@@ -17,6 +17,7 @@
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/ssl/stream_base.hpp>
 #include <boost/system/error_code.hpp>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
@@ -99,6 +100,8 @@ public:
     template <class F>
     void asyncTo(F f)
     {
+        if (!m_run)
+            return;
         m_asyncGroup.run(std::move(f));
     }
 
@@ -166,7 +169,7 @@ protected:
     std::function<bool(X509* x509, std::string& pubHex)> m_sslContextPubHandler;
     std::function<bool(X509* x509, std::string& pubHex)> m_sslContextPubHandlerWithoutExtInfo;
 
-    bool m_run = false;
+    std::atomic_bool m_run = {false};
 
     P2PInfo m_p2pInfo;
 
