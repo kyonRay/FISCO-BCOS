@@ -330,6 +330,27 @@ TransactionStatus MemoryStorage::verifyAndSubmitTransaction(
     // Define remaining validation steps as a chain
     // Each step returns TransactionStatus::None if validation passes, or an error status otherwise
     const std::vector<std::function<TransactionStatus()>> validationSteps = {
+        [this, transaction, &txSubmitCallback]() {
+            // Step 1: Check if transaction already exists in txpool
+            auto result = txpoolStorageCheck(*transaction, txSubmitCallback);
+            if (result == TransactionStatus::AlreadyInTxPoolAndAccept) [[unlikely]]
+            {
+                // Note: if rpc is slower than p2p tx sync, we also need to accept this tx and
+                // record callback
+                return TransactionStatus::None;
+            }
+            return result;
+        },
+        [this, checkPoolLimit]() {
+            // Step 1.5: Enforce pool size limit before running expensive validation steps (FIB-55)
+            if (checkPoolLimit &&
+                (m_bcosTransactions.unsealTransactions.size() +
+                    m_bcosTransactions.sealedTransactions.size()) >= m_config->poolLimit())
+            {
+                return TransactionStatus::TxPoolIsFull;
+            }
+            return TransactionStatus::None;
+        },
         [this, transaction]() {
             // Step 2: Verify transaction signature (if enabled)
             return m_config->checkTransactionSignature() ?
