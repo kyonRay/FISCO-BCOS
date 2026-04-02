@@ -36,7 +36,7 @@ public:
 
     task::Task<void> rollback(Savepoint savepoint)
     {
-        while (static_cast<Savepoint>(m_records.size()) > savepoint)
+        while (!m_records.empty() && m_records.size() > static_cast<size_t>(savepoint))
         {
             auto record = std::move(m_records.back());
             m_records.pop_back();
