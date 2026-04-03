@@ -205,17 +205,43 @@ TransactionStatus MemoryStorage::txpoolStorageCheck(
     const Transaction& transaction, protocol::TxSubmitCallback& txSubmitCallback)
 {
     auto hash = transaction.hash();
-    if (TxsMap::ReadAccessor accessor;
-        m_bcosTransactions.unsealTransactions.find<TxsMap::ReadAccessor>(accessor, hash) ||
-        m_bcosTransactions.sealedTransactions.find<TxsMap::ReadAccessor>(accessor, hash))
-    {
-        if (txSubmitCallback && !accessor.value()->submitCallback())
+
+    // Per-map double-checked lookup: ReadAccessor (shared lock) first, upgrade to
+    // exclusive lock only when mutation is needed.  Each map uses its own accessor
+    // so the correct bucket lock is held.
+    auto checkMap = [&](auto& txMap) -> std::optional<TransactionStatus> {
+        // Fast path: shared (read) lock
+        TxsMap::ReadAccessor readAccessor;
+        if (!txMap.find(readAccessor, hash))
         {
-            accessor.value()->setSubmitCallback(std::move(txSubmitCallback));
-            return TransactionStatus::AlreadyInTxPoolAndAccept;
+            return std::nullopt;  // not in this map
+        }
+        if (!txSubmitCallback || readAccessor.value()->submitCallback())
+        {
+            return TransactionStatus::AlreadyInTxPool;  // no mutation needed
         }
 
-        return TransactionStatus::AlreadyInTxPool;
+        // Slow path: upgrade read lock -> write lock in-place
+        if (!readAccessor.upgradeToWriter() && !readAccessor.revalidate(hash))
+        {
+            return std::nullopt;  // tx removed during non-atomic upgrade
+        }
+        // Double-check under exclusive lock
+        if (!readAccessor.value()->submitCallback())
+        {
+            readAccessor.value()->setSubmitCallback(std::move(txSubmitCallback));
+            return TransactionStatus::AlreadyInTxPoolAndAccept;
+        }
+        return TransactionStatus::AlreadyInTxPool;  // another thread set it first
+    };
+
+    if (const auto result = checkMap(m_bcosTransactions.unsealTransactions))
+    {
+        return *result;
+    }
+    if (const auto result = checkMap(m_bcosTransactions.sealedTransactions))
+    {
+        return *result;
     }
     return TransactionStatus::None;
 }
@@ -715,7 +741,9 @@ bool MemoryStorage::batchSealTransactions(std::vector<protocol::TransactionMetaD
         return true;
     };
 
-    for (auto& accessor : m_bcosTransactions.unsealTransactions.rangeByKey<TxsMap::ReadAccessor>(
+    // Use WriteAccessor so that mutations inside handleTx (setSealed, setBatchId, setBatchHash)
+    // are performed under an exclusive bucket lock (FIB-54)
+    for (auto& accessor : m_bcosTransactions.unsealTransactions.rangeByKey<TxsMap::WriteAccessor>(
              m_knownLatestSealedTxHash))
     {
         const auto& tx = accessor.value();
@@ -876,8 +904,11 @@ bool MemoryStorage::batchMarkTxs(crypto::HashListView _txsHashList, BlockNumber 
     TxsMap* toMap = _sealFlag ? std::addressof(m_bcosTransactions.sealedTransactions) :
                                 std::addressof(m_bcosTransactions.unsealTransactions);
     std::vector<Transaction::Ptr> moveTransactions(_txsHashList.size());
-    fromMap->traverse<TxsMap::ReadAccessor, true>(
-        _txsHashList, [&](TxsMap::ReadAccessor& accessor, const auto& range, auto& bucket) {
+    // Use WriteAccessor so that mutations to transaction fields (setSealed, setBatchId,
+    // setBatchHash) are performed under an exclusive bucket lock, preventing data races
+    // with concurrent readers of the same bucket (FIB-54)
+    fromMap->traverse<TxsMap::WriteAccessor, true>(
+        _txsHashList, [&](TxsMap::WriteAccessor& accessor, const auto& range, auto& bucket) {
             size_t localNotFound = 0;
             size_t localReSealed = 0;
             size_t localSuccess = 0;
