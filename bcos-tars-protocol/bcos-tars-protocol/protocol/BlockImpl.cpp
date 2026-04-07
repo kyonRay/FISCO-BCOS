@@ -86,6 +86,11 @@ void BlockImpl::appendReceipt(bcos::protocol::TransactionReceipt::Ptr _receipt)
         std::dynamic_pointer_cast<bcostars::protocol::TransactionReceiptImpl>(_receipt)->inner());
 }
 
+void BlockImpl::clearReceipts()
+{
+    m_inner.receipts.clear();
+}
+
 void BlockImpl::setNonceList(::ranges::any_view<std::string> nonces)
 {
     m_inner.nonceList = ::ranges::to<std::vector>(nonces);
