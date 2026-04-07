@@ -114,6 +114,13 @@ int32_t P2PMessageOptions::decode(const bytesConstRef& _buffer)
             boost::asio::detail::socket_ops::network_to_host_short(*((uint16_t*)&_buffer[offset]));
         offset += 2;
 
+        if (groupIDLength > MAX_GROUPID_LENGTH)
+        {
+            P2PMSG_LOG(ERROR) << LOG_DESC("groupID length overflow in decode")
+                              << LOG_KV("groupIDLength", groupIDLength);
+            return MessageDecodeStatus::MESSAGE_ERROR;
+        }
+
         // groupID
         if (groupIDLength > 0)
         {
@@ -127,6 +134,13 @@ int32_t P2PMessageOptions::decode(const bytesConstRef& _buffer)
         uint16_t nodeIDLength =
             boost::asio::detail::socket_ops::network_to_host_short(*((uint16_t*)&_buffer[offset]));
         offset += 2;
+
+        if (nodeIDLength > MAX_NODEID_LENGTH)
+        {
+            P2PMSG_LOG(ERROR) << LOG_DESC("nodeID length overflow in decode")
+                              << LOG_KV("nodeIDLength", nodeIDLength);
+            return MessageDecodeStatus::MESSAGE_ERROR;
+        }
 
         checkOffset(offset + nodeIDLength, length);
         m_srcNodeID.clear();
