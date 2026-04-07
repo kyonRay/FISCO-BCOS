@@ -111,15 +111,23 @@ public:
             }
             else if constexpr (step == 1)
             {
-                // FIB-75: save pre-nonce savepoint for full rollback on insufficient balance
-                auto preNonceSavepoint = m_data->m_rollbackableStorage.current();
                 auto updated = co_await updateNonce();
                 if (updated)
                 {
                     m_data->m_startSavepoint = m_data->m_rollbackableStorage.current();
                 }
+
+                if (m_data->m_ledgerConfig.get().features().get(
+                        ledger::Features::Flag::bugfix_gas_payment_balance_precheck))
+                {
+                    // FIB-75: pre-check balance before EVM execution
+                    if (!co_await preCheckBalance())
+                    {
+                        co_return {};
+                    }
+                }
                 m_data->m_evmcResult.emplace(co_await m_data->m_hostContext.execute());
-                co_await consumeBalance(preNonceSavepoint);
+                co_await consumeBalance();
             }
             else if constexpr (step == 2)
             {
@@ -153,7 +161,61 @@ public:
             co_return false;
         }
 
-        task::Task<void> consumeBalance(typename Rollbackable<Storage>::Savepoint preNonceSavepoint)
+        // FIB-75: Pre-execution balance check. Rejects transactions whose sender
+        // cannot cover txGasLimit * gasPrice, skipping EVM execution entirely.
+        // Increments nonce for replay protection but does NOT confiscate balance
+        // (EVM didn't run, no resources consumed beyond validation).
+        task::Task<bool> preCheckBalance()
+        {
+            if (m_data->m_call)
+            {
+                co_return true;
+            }
+
+            const auto gasPrice = u256{std::get<0>(m_data->m_ledgerConfig.get().gasPrice())};
+            if (gasPrice == 0)
+            {
+                co_return true;
+            }
+
+            // Use tx-declared gasLimit for pre-check (web3 txs declare their gas budget)
+            auto txGasLimit = m_data->m_transaction.get().gasLimit();
+            if (txGasLimit <= 0)
+            {
+                co_return true;  // No declared gasLimit, rely on post-execution check
+            }
+
+            auto maxGasCost = u256(txGasLimit) * gasPrice;
+            auto& evmcMessage = m_data->m_hostContext.message();
+            auto senderAccount = getAccount(m_data->m_hostContext, evmcMessage.sender);
+            auto senderBalance = co_await senderAccount.balance();
+
+            if (senderBalance < maxGasCost)
+            {
+                TRANSACTION_EXECUTOR_LOG(ERROR)
+                    << "Pre-check: insufficient balance for gas" << LOG_KV("balance", senderBalance)
+                    << LOG_KV("maxGasCost", maxGasCost);
+
+                // Nonce already persisted at m_startSavepoint, EVM hasn't run —
+                // nothing to rollback. Just build the failure result.
+                evmc_result failResult{};
+                failResult.status_code = EVMC_INSUFFICIENT_BALANCE;
+                failResult.gas_left = 0;
+                failResult.output_data = nullptr;
+                failResult.output_size = 0;
+                failResult.release = nullptr;
+                failResult.create_address = {};
+                m_data->m_evmcResult.emplace(
+                    EVMCResult(failResult, protocol::TransactionStatus::NotEnoughCash));
+                m_data->m_gasUsed = m_data->m_gasLimit;
+                m_data->m_gasPriceStr = "0x" + gasPrice.str(256, std::ios_base::hex);
+
+                co_return false;
+            }
+            co_return true;
+        }
+
+        task::Task<void> consumeBalance()
         {
             auto& evmcResult = *m_data->m_evmcResult;
             m_data->m_gasUsed = m_data->m_gasLimit - evmcResult.gas_left;
@@ -185,17 +247,21 @@ public:
                         evmcResult.output_size = 0;
                         evmcResult.release = nullptr;
                         evmcResult.create_address = {};
-                        // FIB-75: full rollback including nonce, then re-apply nonce
+                        // Rollback execution effects (keep nonce)
+                        co_await m_data->m_rollbackableStorage.rollback(m_data->m_startSavepoint);
+                        // FIB-75: deduct gas fee after rollback (pay what you can)
                         if (m_data->m_ledgerConfig.get().features().get(
-                                ledger::Features::Flag::bugfix_gas_payment_nonce_rollback))
+                                ledger::Features::Flag::bugfix_gas_payment_balance_precheck))
                         {
-                            co_await m_data->m_rollbackableStorage.rollback(preNonceSavepoint);
-                            co_await updateNonce();
-                        }
-                        else
-                        {
-                            co_await m_data->m_rollbackableStorage.rollback(
-                                m_data->m_startSavepoint);
+                            auto accountAfterRollback =
+                                getAccount(m_data->m_hostContext, evmcMessage.sender);
+                            auto balanceAfterRollback = co_await accountAfterRollback.balance();
+                            if (balanceAfterRollback > 0)
+                            {
+                                auto deduction = std::min(balanceAfterRollback, balanceUsed);
+                                co_await accountAfterRollback.setBalance(
+                                    balanceAfterRollback - deduction);
+                            }
                         }
                     }
                     else

@@ -203,26 +203,38 @@ task::Task<TransactionStatus> TxValidator::validateBalance(
     }
     // if gasPriceConfig is not set, we can skip the balance check
     bool skipBalanceCheck = false;
+    u256 systemGasPrice{0};
     if (auto gasPriceConfig =
             co_await ledger::getSystemConfig(*_ledger, ledger::SYSTEM_KEY_TX_GAS_PRICE))
     {
-        if (auto& [gasPriceStr, blockNumber] = gasPriceConfig.value();
-            gasPriceStr == "0x0" || gasPriceStr == "0")
+        auto& [gasPriceStr, blockNumber] = gasPriceConfig.value();
+        if (gasPriceStr == "0x0" || gasPriceStr == "0")
         {
             skipBalanceCheck = true;
             TX_VALIDATOR_CHECKER_LOG(TRACE) << LOG_BADGE("validateBalance")
                                             << LOG_DESC("Skip balance check due to zero gas price")
                                             << LOG_KV("gasPrice", gasPriceStr);
         }
+        else
+        {
+            systemGasPrice = u256(gasPriceStr);
+        }
     }
-    if (auto txValue = u256(_tx.value());
-        !skipBalanceCheck && (balanceValue < txValue || balanceValue == 0))
+    // FIB-75: include gas cost (txGasLimit * systemGasPrice) in balance check
+    if (!skipBalanceCheck)
     {
-        TX_VALIDATOR_CHECKER_LOG(TRACE)
-            << LOG_BADGE("ValidateTransactionWithState") << LOG_DESC("InsufficientFunds")
-            << LOG_KV("sender", sender) << LOG_KV("balance", balanceValue)
-            << LOG_KV("txValue", txValue);
-        co_return TransactionStatus::InsufficientFunds;
+        auto txValue = u256(_tx.value());
+        auto gasCost = (_tx.gasLimit() > 0) ? u256(_tx.gasLimit()) * systemGasPrice : u256(0);
+        if (auto totalRequired = txValue + gasCost;
+            balanceValue < totalRequired || balanceValue == 0)
+        {
+            TX_VALIDATOR_CHECKER_LOG(TRACE)
+                << LOG_BADGE("ValidateTransactionWithState") << LOG_DESC("InsufficientFunds")
+                << LOG_KV("sender", sender) << LOG_KV("balance", balanceValue)
+                << LOG_KV("txValue", txValue) << LOG_KV("gasCost", gasCost)
+                << LOG_KV("totalRequired", totalRequired);
+            co_return TransactionStatus::InsufficientFunds;
+        }
     }
 
     co_return TransactionStatus::None;
