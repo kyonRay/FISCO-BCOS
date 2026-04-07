@@ -44,7 +44,7 @@ private:
     }
 
     friend auto tag_invoke(storage2::tag_t<storage2::readSome> /*unused*/,
-        ReadWriteSetStorage& storage, ::ranges::input_range auto keys)
+        ReadWriteSetStorage& storage, ::ranges::forward_range auto keys)
         -> task::Task<task::AwaitableReturnType<
             std::invoke_result_t<storage2::ReadSome, Storage&, decltype(keys)>>>
     {
@@ -56,10 +56,15 @@ private:
     }
 
     friend auto tag_invoke(storage2::tag_t<storage2::readSome> /*unused*/,
-        ReadWriteSetStorage& storage, ::ranges::input_range auto keys, storage2::DIRECT_TYPE direct)
+        ReadWriteSetStorage& storage, ::ranges::forward_range auto keys,
+        storage2::DIRECT_TYPE direct)
         -> task::Task<task::AwaitableReturnType<std::invoke_result_t<storage2::ReadSome,
             std::add_lvalue_reference_t<Storage>, decltype(std::move(keys))>>>
     {
+        for (auto&& key : keys)
+        {
+            storage.putSet(false, key);
+        }
         co_return co_await storage2::readSome(storage.m_storage.get(), std::move(keys), direct);
     }
 
@@ -77,6 +82,7 @@ private:
         -> task::Task<task::AwaitableReturnType<
             std::invoke_result_t<storage2::ReadOne, Storage&, decltype(key)>>>
     {
+        storage.putSet(false, key);
         co_return co_await storage2::readOne(storage.m_storage.get(), key, direct);
     }
 
@@ -85,43 +91,57 @@ private:
         -> task::Task<task::AwaitableReturnType<
             std::invoke_result_t<storage2::WriteOne, Storage&, decltype(key), decltype(value)>>>
     {
-        storage.putSet(true, key);
+        auto keyCopy = key;
         co_await storage2::writeOne(storage.m_storage.get(), std::move(key), std::move(value));
+        storage.putSet(true, keyCopy);
     }
 
     friend auto tag_invoke(storage2::tag_t<storage2::writeSome> /*unused*/,
-        ReadWriteSetStorage& storage, ::ranges::input_range auto keyValues)
+        ReadWriteSetStorage& storage, ::ranges::forward_range auto keyValues)
         -> task::Task<task::AwaitableReturnType<
             std::invoke_result_t<storage2::WriteSome, Storage&, decltype(keyValues)>>>
     {
+        std::vector<Key> trackedKeys;
         for (auto&& [key, _] : keyValues)
+        {
+            trackedKeys.push_back(key);
+        }
+        co_await storage2::writeSome(storage.m_storage.get(), std::move(keyValues));
+        for (auto&& key : trackedKeys)
         {
             storage.putSet(true, key);
         }
-        co_return co_await storage2::writeSome(storage.m_storage.get(), std::move(keyValues));
     }
 
     friend task::Task<void> tag_invoke(storage2::tag_t<storage2::removeOne> /*unused*/,
         ReadWriteSetStorage& storage, auto key, auto&&... args)
     {
-        storage.putSet(true, key);
+        auto keyCopy = key;
         co_await storage2::removeOne(
             storage.m_storage.get(), std::move(key), std::forward<decltype(args)>(args)...);
+        storage.putSet(true, keyCopy);
     }
 
     friend auto tag_invoke(storage2::tag_t<storage2::removeSome> /*unused*/,
-        ReadWriteSetStorage& storage, ::ranges::input_range auto keys, auto&&... args)
+        ReadWriteSetStorage& storage, ::ranges::forward_range auto keys, auto&&... args)
         -> task::Task<task::AwaitableReturnType<std::invoke_result_t<storage2::RemoveSome, Storage&,
             decltype(keys), decltype(args)...>>>
     {
+        std::vector<Key> trackedKeys;
         for (auto&& key : keys)
+        {
+            trackedKeys.push_back(key);
+        }
+        co_await storage2::removeSome(
+            storage.m_storage.get(), std::move(keys), std::forward<decltype(args)>(args)...);
+        for (auto&& key : trackedKeys)
         {
             storage.putSet(true, key);
         }
-        co_return co_await storage2::removeSome(
-            storage.m_storage.get(), std::move(keys), std::forward<decltype(args)>(args)...);
     }
 
+    // NOTE: range() does not track reads because it returns a lazy iterator whose
+    // keys are not known until consumption. This is a known limitation (FIB-100).
     friend auto tag_invoke(bcos::storage2::tag_t<storage2::range> /*unused*/,
         ReadWriteSetStorage& storage, auto&&... args)
         -> task::Task<storage2::ReturnType<
