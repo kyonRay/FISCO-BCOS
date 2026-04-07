@@ -81,7 +81,8 @@ bcos::executor_v1::PrecompiledManager::PrecompiledManager(crypto::Hash::Ptr hash
     m_address2Precompiled.emplace_back(
         0x100e, std::make_shared<precompiled::BFSPrecompiled>(m_hashImpl));
     m_address2Precompiled.emplace_back(
-        0x5003, std::make_shared<precompiled::PaillierPrecompiled>(m_hashImpl));
+        0x5003, Precompiled{std::make_shared<precompiled::PaillierPrecompiled>(m_hashImpl),
+                    ledger::Features::Flag::feature_paillier});
     m_address2Precompiled.emplace_back(
         0x5004, std::make_shared<precompiled::GroupSigPrecompiled>(m_hashImpl));
     m_address2Precompiled.emplace_back(
@@ -148,10 +149,10 @@ bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::get
 bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::getPrecompiled(
     unsigned long contractAddress, const ledger::Features& features) const
 {
-    auto* precompiled = getPrecompiled(contractAddress);
+    const auto* precompiled = getPrecompiled(contractAddress);
     if (precompiled != nullptr)
     {
-        if (auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
+        if (const auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
         {
             return nullptr;
         }
@@ -162,10 +163,10 @@ bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::get
 bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::getPrecompiled(
     const evmc_address& address, const ledger::Features& features) const
 {
-    auto* precompiled = getPrecompiled(address);
+    const auto* precompiled = getPrecompiled(address);
     if (precompiled != nullptr)
     {
-        if (auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
+        if (const auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
         {
             return nullptr;
         }

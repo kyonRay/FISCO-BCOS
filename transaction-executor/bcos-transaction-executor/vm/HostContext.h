@@ -300,7 +300,8 @@ public:
 
     task::Task<size_t> codeSizeAt(const evmc_address& address, auto&&... /*unused*/)
     {
-        if (auto const* precompiled = m_precompiledManager.get().getPrecompiled(address))
+        if (auto const* precompiled =
+                m_precompiledManager.get().getPrecompiled(address, m_ledgerConfig.get().features()))
         {
             co_return executor_v1::size(*precompiled);
         }
@@ -652,8 +653,8 @@ private:
                 << LOG_DESC("callDynamicPrecompiled") << LOG_KV("codeAddr", message.code_address)
                 << LOG_KV("recvAddr", message.recipient) << LOG_KV("code", code);
 
-            if (m_preparedPrecompiled =
-                    m_precompiledManager.get().getPrecompiled(message.recipient);
+            if (m_preparedPrecompiled = m_precompiledManager.get().getPrecompiled(
+                    message.recipient, m_ledgerConfig.get().features());
                 m_preparedPrecompiled == nullptr)
             {
                 BOOST_THROW_EXCEPTION(NotFoundCodeError());
@@ -667,15 +668,11 @@ private:
         // delegatecall static precompiled is not allowed
         if (ref.kind != EVMC_DELEGATECALL)
         {
-            if (auto const* precompiled =
-                    m_precompiledManager.get().getPrecompiled(ref.code_address))
+            if (auto const* precompiled = m_precompiledManager.get().getPrecompiled(
+                    ref.code_address, m_ledgerConfig.get().features()))
             {
-                if (auto flag = executor_v1::featureFlag(*precompiled);
-                    !flag || m_ledgerConfig.get().features().get(*flag))
-                {
-                    m_preparedPrecompiled = precompiled;
-                    co_return;
-                }
+                m_preparedPrecompiled = precompiled;
+                co_return;
             }
         }
     }

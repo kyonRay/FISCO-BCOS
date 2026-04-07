@@ -60,7 +60,7 @@ public:
         auto addressBytes = fromHex(_address);
         auto address = fromBigEndian<u160>(addressBytes);
         const auto* precompiled =
-            m_precompiledManager.getPrecompiled(address.convert_to<unsigned long>());
+            m_precompiledManager.getPrecompiled(address.convert_to<unsigned long>(), features);
         if (precompiled == nullptr)
         {
             return nullptr;
