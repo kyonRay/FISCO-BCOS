@@ -220,11 +220,23 @@ task::Task<TransactionStatus> TxValidator::validateBalance(
             systemGasPrice = u256(gasPriceStr);
         }
     }
-    // FIB-75: include gas cost (txGasLimit * systemGasPrice) in balance check
+    // FIB-75: validate effective gas price >= systemGasPrice, then use it for gas cost.
+    // effectiveGasPrice() reads gasPrice for legacy/EIP-2930 txs and maxFeePerGas for EIP-1559+.
     if (!skipBalanceCheck)
     {
+        const auto txGasPrice = protocol::effectiveGasPrice(_tx);
+
+        if (txGasPrice < systemGasPrice)
+        {
+            TX_VALIDATOR_CHECKER_LOG(TRACE)
+                << LOG_BADGE("ValidateTransactionWithState")
+                << LOG_DESC("tx gasPrice below system minimum") << LOG_KV("sender", sender)
+                << LOG_KV("txGasPrice", txGasPrice) << LOG_KV("systemGasPrice", systemGasPrice);
+            co_return TransactionStatus::InsufficientFunds;
+        }
+
         auto txValue = u256(_tx.value());
-        auto gasCost = (_tx.gasLimit() > 0) ? u256(_tx.gasLimit()) * systemGasPrice : u256(0);
+        auto gasCost = (_tx.gasLimit() > 0) ? u256(_tx.gasLimit()) * txGasPrice : u256(0);
         if (auto totalRequired = txValue + gasCost;
             balanceValue < totalRequired || balanceValue == 0)
         {

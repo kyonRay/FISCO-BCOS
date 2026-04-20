@@ -41,6 +41,22 @@ public:
         bcos::storage2::memory_storage::MemoryStorage<bcos::executor_v1::StateKey,
             bcos::executor_v1::StateValue, bcos::storage2::memory_storage::ORDERED>;
 
+    // FIB-75: Effective gas limit for EVM execution.
+    // When bugfix_gas_payment_balance_precheck is enabled and the tx declares gasLimit > 0,
+    // the EVM budget is capped at tx.gasLimit() (geth-compatible); otherwise falls back to
+    // blockGasLimit for backward compat.
+    static int64_t computeEffectiveGasLimit(
+        protocol::Transaction const& tx, ledger::LedgerConfig const& cfg)
+    {
+        const auto txSysGasLimit = static_cast<int64_t>(std::get<0>(cfg.gasLimit()));
+        if (cfg.features().get(ledger::Features::Flag::bugfix_gas_payment_balance_precheck) &&
+            tx.gasLimit() > 0)
+        {
+            return std::min<int64_t>(tx.gasLimit(), txSysGasLimit);
+        }
+        return txSysGasLimit;
+    }
+
     template <class Storage>
     struct ExecuteContext
     {
@@ -53,6 +69,9 @@ public:
             std::reference_wrapper<ledger::LedgerConfig const> m_ledgerConfig;
             Rollbackable<Storage> m_rollbackableStorage;
             Rollbackable<Storage>::Savepoint m_startSavepoint;
+            // FIB-75: savepoint right after buyGas() pre-deduction — used to rollback only EVM
+            // effects while preserving the pre-deducted balance.
+            Rollbackable<Storage>::Savepoint m_afterBuyGasSavepoint{0};
             TransientStorage m_transientStorage;
             Rollbackable<decltype(m_transientStorage)> m_rollbackableTransientStorage;
             bool m_call;
@@ -80,7 +99,7 @@ public:
                 m_startSavepoint(m_rollbackableStorage.current()),
                 m_rollbackableTransientStorage(m_transientStorage),
                 m_call(call),
-                m_gasLimit(static_cast<int64_t>(std::get<0>(ledgerConfig.gasLimit()))),
+                m_gasLimit(computeEffectiveGasLimit(transaction, ledgerConfig)),
                 m_origin((!m_transaction.get().sender().empty() &&
                              m_transaction.get().sender().size() == sizeof(evmc_address)) ?
                              *(evmc_address*)m_transaction.get().sender().data() :
@@ -117,17 +136,27 @@ public:
                     m_data->m_startSavepoint = m_data->m_rollbackableStorage.current();
                 }
 
-                if (m_data->m_ledgerConfig.get().features().get(
-                        ledger::Features::Flag::bugfix_gas_payment_balance_precheck))
+                if (const auto gasPrice =
+                        u256{std::get<0>(m_data->m_ledgerConfig.get().gasPrice())};
+                    m_data->m_transaction.get().type() == 1 &&  // web3Tx
+                    m_data->m_ledgerConfig.get().features().get(
+                        ledger::Features::Flag::bugfix_gas_payment_balance_precheck) &&
+                    gasPrice > 0)
                 {
-                    // FIB-75: pre-check balance before EVM execution
-                    if (!co_await preCheckBalance())
+                    // FIB-75 geth-style: buy gas (pre-deduct), execute, refund unused gas.
+                    if (!co_await buyGas())
                     {
                         co_return {};
                     }
+                    m_data->m_evmcResult.emplace(co_await m_data->m_hostContext.execute());
+                    co_await refundGas();
                 }
-                m_data->m_evmcResult.emplace(co_await m_data->m_hostContext.execute());
-                co_await consumeBalance();
+                else
+                {
+                    // Legacy path
+                    m_data->m_evmcResult.emplace(co_await m_data->m_hostContext.execute());
+                    co_await consumeBalance();
+                }
             }
             else if constexpr (step == 2)
             {
@@ -161,43 +190,61 @@ public:
             co_return false;
         }
 
-        // FIB-75: Pre-execution balance check. Rejects transactions whose sender
-        // cannot cover txGasLimit * gasPrice, skipping EVM execution entirely.
-        // Increments nonce for replay protection but does NOT confiscate balance
-        // (EVM didn't run, no resources consumed beyond validation).
-        task::Task<bool> preCheckBalance()
+        // FIB-75 (geth-style): Pre-deduct gasLimit * gasPrice from sender before EVM execution.
+        // If balance is insufficient to cover gas + value, fail immediately (EVM does not run,
+        // no balance deducted, nonce preserved as replay protection).
+        // On success, balance -= gasLimit * gasPrice; EVM then runs with m_gasLimit as its
+        // gas budget, guaranteeing gasUsed <= gasLimit so refundGas() always has enough to
+        // settle without confiscating extra balance.
+        task::Task<bool> buyGas()
         {
             if (m_data->m_call)
             {
                 co_return true;
             }
 
-            const auto gasPrice = u256{std::get<0>(m_data->m_ledgerConfig.get().gasPrice())};
+            // FIB-75: use the transaction's effective gas price (legacy gasPrice or EIP-1559
+            // maxFeePerGas) so charging matches what the txpool validated.
+            const auto gasPrice = protocol::effectiveGasPrice(m_data->m_transaction.get());
             if (gasPrice == 0)
             {
                 co_return true;
             }
 
-            // Use tx-declared gasLimit for pre-check (web3 txs declare their gas budget)
-            auto txGasLimit = m_data->m_transaction.get().gasLimit();
-            if (txGasLimit <= 0)
+            if (m_data->m_gasLimit <= 0)
             {
-                co_return true;  // No declared gasLimit, rely on post-execution check
+                co_return true;
             }
 
-            auto maxGasCost = u256(txGasLimit) * gasPrice;
+            const auto maxGasCost = u256(m_data->m_gasLimit) * gasPrice;
+            const auto txValue = u256(m_data->m_transaction.get().value());
+            const auto totalRequired = maxGasCost + txValue;
+
             auto& evmcMessage = m_data->m_hostContext.message();
             auto senderAccount = getAccount(m_data->m_hostContext, evmcMessage.sender);
             auto senderBalance = co_await senderAccount.balance();
 
-            if (senderBalance < maxGasCost)
+            if (senderBalance < totalRequired)
             {
                 TRANSACTION_EXECUTOR_LOG(ERROR)
-                    << "Pre-check: insufficient balance for gas" << LOG_KV("balance", senderBalance)
-                    << LOG_KV("maxGasCost", maxGasCost);
+                    << "buyGas: insufficient balance" << LOG_KV("balance", senderBalance)
+                    << LOG_KV("maxGasCost", maxGasCost) << LOG_KV("txValue", txValue)
+                    << LOG_KV("totalRequired", totalRequired);
 
-                // Nonce already persisted at m_startSavepoint, EVM hasn't run —
-                // nothing to rollback. Just build the failure result.
+                // FIB-75: charge minimum penalty = min(balance, intrinsic_gas * gasPrice).
+                // The transaction is already in a consensus-packed block and consumed
+                // consensus/storage resources, so a sender who can't cover full gas cost
+                // still pays at least the 21000-gas base cost (geth's intrinsic gas for
+                // an empty tx). If balance < intrinsic cost, drain what's left. This
+                // prevents free spam from repeatedly submitting under-funded transactions.
+                constexpr static int64_t INTRINSIC_GAS = 21000;
+                const auto intrinsicCost = u256(INTRINSIC_GAS) * gasPrice;
+                const auto penalty = std::min(senderBalance, intrinsicCost);
+                if (penalty > 0)
+                {
+                    co_await senderAccount.setBalance(senderBalance - penalty);
+                }
+
                 evmc_result failResult{};
                 failResult.status_code = EVMC_INSUFFICIENT_BALANCE;
                 failResult.gas_left = 0;
@@ -207,14 +254,62 @@ public:
                 failResult.create_address = {};
                 m_data->m_evmcResult.emplace(
                     EVMCResult(failResult, protocol::TransactionStatus::NotEnoughCash));
-                m_data->m_gasUsed = m_data->m_gasLimit;
+                // gasUsed reflects what was actually charged as penalty (in gas units).
+                m_data->m_gasUsed = (penalty / gasPrice).template convert_to<int64_t>();
                 m_data->m_gasPriceStr = "0x" + gasPrice.str(256, std::ios_base::hex);
 
                 co_return false;
             }
+
+            // Pre-deduct max gas cost from sender
+            co_await senderAccount.setBalance(senderBalance - maxGasCost);
+            m_data->m_afterBuyGasSavepoint = m_data->m_rollbackableStorage.current();
+            m_data->m_gasPriceStr = "0x" + gasPrice.str(256, std::ios_base::hex);
             co_return true;
         }
 
+        // FIB-75 (geth-style): After EVM execution, refund (gasLimit - gasUsed) * gasPrice.
+        // If EVM failed (non-SUCCESS, non-REVERT), roll back state changes while preserving
+        // the pre-deducted gas cost. gasUsed <= gasLimit is guaranteed because the EVM's
+        // gas budget is m_gasLimit.
+        task::Task<void> refundGas()
+        {
+            auto& evmcResult = *m_data->m_evmcResult;
+            m_data->m_gasUsed = m_data->m_gasLimit - evmcResult.gas_left;
+
+            if (m_data->m_call)
+            {
+                co_return;
+            }
+
+            // FIB-75: mirror buyGas() — use the tx's effective gas price.
+            const auto gasPrice = protocol::effectiveGasPrice(m_data->m_transaction.get());
+            if (gasPrice == 0)
+            {
+                co_return;
+            }
+
+            // On EVM failure (not SUCCESS / REVERT), rollback EVM state changes but keep
+            // the pre-deducted gas — the sender still pays for the wasted execution.
+            if (evmcResult.status_code != EVMC_SUCCESS && evmcResult.status_code != EVMC_REVERT)
+            {
+                co_await m_data->m_rollbackableStorage.rollback(m_data->m_afterBuyGasSavepoint);
+            }
+
+            // Refund unused gas
+            if (evmcResult.gas_left > 0)
+            {
+                auto refund = u256(evmcResult.gas_left) * gasPrice;
+                auto& evmcMessage = m_data->m_hostContext.message();
+                auto senderAccount = getAccount(m_data->m_hostContext, evmcMessage.sender);
+                auto balance = co_await senderAccount.balance();
+                co_await senderAccount.setBalance(balance + refund);
+            }
+        }
+
+        // Legacy balance consumption — only used when bugfix_gas_payment_balance_precheck is OFF.
+        // Kept unchanged from pre-FIB-75 behavior: on insufficient balance, rollback execution
+        // effects and deduct nothing (the original FIB-75 bug that's fixed by the precheck flag).
         task::Task<void> consumeBalance()
         {
             auto& evmcResult = *m_data->m_evmcResult;
@@ -247,22 +342,7 @@ public:
                         evmcResult.output_size = 0;
                         evmcResult.release = nullptr;
                         evmcResult.create_address = {};
-                        // Rollback execution effects (keep nonce)
                         co_await m_data->m_rollbackableStorage.rollback(m_data->m_startSavepoint);
-                        // FIB-75: deduct gas fee after rollback (pay what you can)
-                        if (m_data->m_ledgerConfig.get().features().get(
-                                ledger::Features::Flag::bugfix_gas_payment_balance_precheck))
-                        {
-                            auto accountAfterRollback =
-                                getAccount(m_data->m_hostContext, evmcMessage.sender);
-                            auto balanceAfterRollback = co_await accountAfterRollback.balance();
-                            if (balanceAfterRollback > 0)
-                            {
-                                auto deduction = std::min(balanceAfterRollback, balanceUsed);
-                                co_await accountAfterRollback.setBalance(
-                                    balanceAfterRollback - deduction);
-                            }
-                        }
                     }
                     else
                     {
