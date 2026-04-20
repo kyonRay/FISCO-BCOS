@@ -668,11 +668,23 @@ private:
         // delegatecall static precompiled is not allowed
         if (ref.kind != EVMC_DELEGATECALL)
         {
-            if (auto const* precompiled = m_precompiledManager.get().getPrecompiled(
-                    ref.code_address, m_ledgerConfig.get().features()))
+            auto const& features = m_ledgerConfig.get().features();
+            if (auto const* precompiled =
+                    m_precompiledManager.get().getPrecompiled(ref.code_address, features))
             {
-                m_preparedPrecompiled = precompiled;
-                co_return;
+                // FIB-84: preserve pre-fix manual feature check when bugfix flag is off,
+                // since getPrecompiled(...) in that mode skips enforcement.
+                if (features.get(ledger::Features::Flag::bugfix_precompiled_feature_gate))
+                {
+                    m_preparedPrecompiled = precompiled;
+                    co_return;
+                }
+                if (auto flag = executor_v1::featureFlag(*precompiled);
+                    !flag || features.get(*flag))
+                {
+                    m_preparedPrecompiled = precompiled;
+                    co_return;
+                }
             }
         }
     }

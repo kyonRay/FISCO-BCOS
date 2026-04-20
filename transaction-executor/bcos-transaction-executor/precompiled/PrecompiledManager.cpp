@@ -145,17 +145,24 @@ bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::get
     return nullptr;
 }
 
-// FIB-84: feature-aware lookup
+// FIB-84: feature-aware lookup, gated by bugfix_precompiled_feature_gate
+// When the bugfix flag is off, returns unconditionally (pre-fix behavior) to preserve
+// replay of historical blocks that ran with feature flags improperly enforced.
 bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::getPrecompiled(
     unsigned long contractAddress, const ledger::Features& features) const
 {
     const auto* precompiled = getPrecompiled(contractAddress);
-    if (precompiled != nullptr)
+    if (precompiled == nullptr)
     {
-        if (const auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
-        {
-            return nullptr;
-        }
+        return nullptr;
+    }
+    if (!features.get(ledger::Features::Flag::bugfix_precompiled_feature_gate))
+    {
+        return precompiled;
+    }
+    if (const auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
+    {
+        return nullptr;
     }
     return precompiled;
 }
@@ -164,12 +171,17 @@ bcos::executor_v1::Precompiled const* bcos::executor_v1::PrecompiledManager::get
     const evmc_address& address, const ledger::Features& features) const
 {
     const auto* precompiled = getPrecompiled(address);
-    if (precompiled != nullptr)
+    if (precompiled == nullptr)
     {
-        if (const auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
-        {
-            return nullptr;
-        }
+        return nullptr;
+    }
+    if (!features.get(ledger::Features::Flag::bugfix_precompiled_feature_gate))
+    {
+        return precompiled;
+    }
+    if (const auto flag = featureFlag(*precompiled); flag && !features.get(*flag))
+    {
+        return nullptr;
     }
     return precompiled;
 }
