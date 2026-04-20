@@ -1,6 +1,7 @@
 #include "InspectConfig.h"
 #include <boost/property_tree/ini_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <filesystem>
 
 namespace
 {
@@ -21,6 +22,26 @@ T getConfigValue(const boost::property_tree::ptree& pt, const std::string& prima
     }
     return defaultValue;
 }
+
+std::string resolvePath(const std::filesystem::path& baseDir, const std::string& rawPath)
+{
+    if (rawPath.empty())
+    {
+        return rawPath;
+    }
+
+    std::filesystem::path path(rawPath);
+    if (path.is_absolute())
+    {
+        return path.lexically_normal().string();
+    }
+
+    if (baseDir.empty())
+    {
+        return path.lexically_normal().string();
+    }
+    return (baseDir / path).lexically_normal().string();
+}
 }  // namespace
 
 namespace bcos::air::cli
@@ -34,6 +55,7 @@ InspectConfig InspectConfig::load(const std::string& configPath)
 {
     boost::property_tree::ptree pt;
     boost::property_tree::ini_parser::read_ini(configPath, pt);
+    auto baseDir = std::filesystem::path(configPath).parent_path();
 
     InspectConfig config;
     config.rpcListenIP = pt.get<std::string>("rpc.listen_ip", config.rpcListenIP);
@@ -44,13 +66,14 @@ InspectConfig InspectConfig::load(const std::string& configPath)
     config.chainID = pt.get<std::string>("chain.chain_id", config.chainID);
     config.rpcServiceName = pt.get<std::string>("service.rpc", config.rpcServiceName);
     config.gatewayServiceName = pt.get<std::string>("service.gateway", config.gatewayServiceName);
-    config.storagePath = pt.get<std::string>("storage.data_path", config.storagePath);
+    config.storagePath =
+        resolvePath(baseDir, pt.get<std::string>("storage.data_path", config.storagePath));
     config.storageType = pt.get<std::string>("storage.type", config.storageType);
-    config.logPath = pt.get<std::string>("log.log_path", config.logPath);
+    config.logPath = resolvePath(baseDir, pt.get<std::string>("log.log_path", config.logPath));
     config.adminEnabled =
         getConfigValue<bool>(pt, "admin.enable", "admin_ipc.enable", config.adminEnabled);
-    config.adminIPCPath =
-        getConfigValue<std::string>(pt, "admin.ipc_path", "admin_ipc.path", config.adminIPCPath);
+    config.adminIPCPath = resolvePath(baseDir,
+        getConfigValue<std::string>(pt, "admin.ipc_path", "admin_ipc.path", config.adminIPCPath));
     return config;
 }
 

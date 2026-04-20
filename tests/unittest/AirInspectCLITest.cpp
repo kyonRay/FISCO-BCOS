@@ -1,4 +1,5 @@
 #include "fisco-bcos-air/cli/FallbackInspectors.h"
+#include "fisco-bcos-air/cli/InspectApplication.h"
 #include "fisco-bcos-air/cli/InspectConfig.h"
 #include "fisco-bcos-air/cli/InspectRenderer.h"
 #include "fisco-bcos-air/cli/InspectTypes.h"
@@ -72,7 +73,8 @@ ipc_path=./run/admin.sock
     BOOST_CHECK_EQUAL(config.preferredSource(), "rpc+logs");
     BOOST_CHECK_EQUAL(config.rpcListenIP, "127.0.0.1");
     BOOST_CHECK_EQUAL(config.rpcListenPort, 20200);
-    BOOST_CHECK_EQUAL(config.logPath, "./log");
+    BOOST_CHECK_EQUAL(config.logPath, (file.directory / "log").string());
+    BOOST_CHECK_EQUAL(config.adminIPCPath, (file.directory / "run/admin.sock").string());
 }
 
 BOOST_AUTO_TEST_CASE(logInspectorReadsConfiguredPath)
@@ -101,4 +103,38 @@ BOOST_AUTO_TEST_CASE(executorSectionIsMarkedUnavailableInFallbackMode)
     BOOST_CHECK(!section.available);
     BOOST_CHECK(section.reason.find("rpc+logs") != std::string::npos);
     BOOST_CHECK_EQUAL(section.data["source"].asString(), "rpc+logs");
+}
+
+BOOST_AUTO_TEST_CASE(selectsAdminIpcWhenEnabledAndReachable)
+{
+    bcos::air::cli::InspectConfig config;
+    config.adminEnabled = true;
+    config.adminIPCPath = "/tmp/fisco-bcos-admin.sock";
+
+    bcos::air::cli::InspectApplication app(config);
+    app.setAdminReachabilityForTest(true);
+    BOOST_CHECK_EQUAL(app.selectSource(), "admin-ipc");
+}
+
+BOOST_AUTO_TEST_CASE(fallsBackWhenAdminIpcUnavailable)
+{
+    bcos::air::cli::InspectConfig config;
+    config.adminEnabled = true;
+    config.adminIPCPath = "/tmp/missing.sock";
+
+    bcos::air::cli::InspectApplication app(config);
+    app.setAdminReachabilityForTest(false);
+    BOOST_CHECK_EQUAL(app.selectSource(), "rpc+logs");
+}
+
+BOOST_AUTO_TEST_CASE(fallbackResponseReportsRpcAndLogsSourceEvenWhenAdminEnabled)
+{
+    bcos::initializer::CLIRequest request;
+    request.command = "inspect";
+
+    bcos::air::cli::InspectConfig config;
+    config.adminEnabled = true;
+
+    auto response = bcos::air::cli::InspectApplication::buildResponse(request, config);
+    BOOST_CHECK_EQUAL(response.source, "rpc+logs");
 }

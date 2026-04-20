@@ -20,6 +20,7 @@
  */
 
 #pragma once
+#include "cli/AdminIPCServer.h"
 #include "libinitializer/Initializer.h"
 #include <bcos-framework/gateway/GatewayInterface.h>
 #include <bcos-framework/rpc/RPCInterface.h>
@@ -43,6 +44,8 @@ public:
     virtual void start();
     virtual void stop();
     virtual bcos::initializer::Initializer::Ptr nodeInitializer() { return m_nodeInitializer; }
+    virtual bcos::rpc::RPCInterface::Ptr rpc() { return m_rpc; }
+    virtual bcos::gateway::GatewayInterface::Ptr gateway() { return m_gateway; }
 
 protected:
     virtual void initAirNode(std::string const& _configFilePath, std::string const& _genesisFile,
@@ -64,5 +67,7 @@ private:
     std::optional<rpc::RPCApplication> m_tarsApplication;
     std::optional<std::string> m_tarsConfig;
     std::optional<std::thread> m_tarsThread;
+    std::shared_ptr<bcos::air::cli::AdminIPCServer> m_adminIPCServer;
+    std::optional<bcos::air::cli::InspectConfig> m_adminInspectConfig;
 };
 }  // namespace bcos::node
