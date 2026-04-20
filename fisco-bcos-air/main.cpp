@@ -24,6 +24,7 @@
  */
 #include "AirNodeInitializer.h"
 #include "Common.h"
+#include "cli/InspectApplication.h"
 #include "libinitializer/CommandHelper.h"
 #include <bcos-crypto/signature/key/KeyFactoryImpl.h>
 #include <bcos-tool/NodeConfig.h>
@@ -33,17 +34,6 @@
 using namespace bcos::node;
 using namespace bcos::initializer;
 using namespace bcos::node;
-
-namespace
-{
-int runAirInspectCLI(const bcos::initializer::Params& param)
-{
-    std::cout << "[" << bcos::getCurrentDateTime() << "] ";
-    std::cout << "inspect cli command '" << param.cliRequest.command << "' is not implemented yet."
-              << std::endl;
-    return -1;
-}
-}  // namespace
 
 int main(int argc, const char* argv[])
 {
@@ -70,7 +60,7 @@ int main(int argc, const char* argv[])
         auto param = bcos::initializer::initAirNodeCommandLine(argc, argv, false);
         if (param.cliMode)
         {
-            return runAirInspectCLI(param);
+            return bcos::air::cli::runAirInspectCLI(param);
         }
         if (param.op != bcos::initializer::Params::operation::None)
         {
