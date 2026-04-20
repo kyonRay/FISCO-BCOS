@@ -20,6 +20,7 @@
 #pragma once
 #include <iostream>
 #include <memory>
+#include <optional>
 namespace bcos
 {
 namespace initializer
@@ -28,12 +29,26 @@ void printVersion();
 void showNodeVersionMetric();
 void initCommandLine(int argc, char* argv[]);
 
+struct CLIRequest
+{
+    std::string command;
+    std::string domain;
+    bool jsonOutput = false;
+    bool verbose = false;
+    bool showSource = false;
+    int timeoutMs = 3000;
+    std::optional<int> tail;
+    std::string logLevel;
+};
+
 struct Params
 {
     std::string configFilePath;
     std::string genesisFilePath;
     std::string snapshotPath;  // import from or export to
-    float txSpeed;
+    float txSpeed = 10;
+    bool cliMode = false;
+    CLIRequest cliRequest;
     enum class operation : int
     {
         None = 0,
@@ -58,6 +73,7 @@ inline Params::operation operator&(Params::operation left, Params::operation rig
     return static_cast<Params::operation>(static_cast<int>(left) & static_cast<int>(right));
 }
 
+Params parseAirNodeCommandLine(int argc, const char* argv[], bool _autoSendTx);
 Params initAirNodeCommandLine(int argc, const char* argv[], bool _autoSendTx);
 }  // namespace initializer
 }  // namespace bcos

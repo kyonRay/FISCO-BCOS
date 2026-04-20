@@ -34,6 +34,17 @@ using namespace bcos::node;
 using namespace bcos::initializer;
 using namespace bcos::node;
 
+namespace
+{
+int runAirInspectCLI(const bcos::initializer::Params& param)
+{
+    std::cout << "[" << bcos::getCurrentDateTime() << "] ";
+    std::cout << "inspect cli command '" << param.cliRequest.command << "' is not implemented yet."
+              << std::endl;
+    return -1;
+}
+}  // namespace
+
 int main(int argc, const char* argv[])
 {
     /// set LC_ALL
@@ -57,6 +68,10 @@ int main(int argc, const char* argv[])
     try
     {
         auto param = bcos::initializer::initAirNodeCommandLine(argc, argv, false);
+        if (param.cliMode)
+        {
+            return runAirInspectCLI(param);
+        }
         if (param.op != bcos::initializer::Params::operation::None)
         {
             if (param.hasOp(bcos::initializer::Params::operation::Prune))
