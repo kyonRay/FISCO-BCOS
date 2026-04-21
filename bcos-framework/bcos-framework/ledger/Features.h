@@ -57,6 +57,7 @@ public:
         bugfix_auth_check_revert_status,
         bugfix_auth_table_raw_address,
         bugfix_auth_table_squatting,
+        bugfix_evm_storage_status,
         feature_dmc2serial,
         feature_sharding,
         feature_rpbft,
@@ -291,6 +292,7 @@ public:
                         Flag::bugfix_auth_check_revert_status,
                         Flag::bugfix_auth_table_raw_address,
                         Flag::bugfix_auth_table_squatting,
+                        Flag::bugfix_evm_storage_status,
                     }}});
         for (const auto& upgradeFeatures : upgradeRoadmap)
         {

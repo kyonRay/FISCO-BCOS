@@ -228,6 +228,7 @@ public:
 
     constexpr evmc_message const& message() const& { return m_message; }
     constexpr evmc_message& mutableMessage() & { return m_message; }
+    constexpr ledger::LedgerConfig const& ledgerConfig() const& { return m_ledgerConfig.get(); }
 
     friend auto getAccount(HostContext& hostContext, const evmc_address& address)
     {

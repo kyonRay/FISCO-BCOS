@@ -584,13 +584,17 @@ BOOST_AUTO_TEST_CASE(evmTimestamp)
     }(this));
 }
 
-BOOST_AUTO_TEST_CASE(setStorageStatus)
+BOOST_AUTO_TEST_CASE(setStorageStatusWithBugfix)
 {
-    // FIB-94: Verify that setStorage returns the correct evmc_storage_status
-    // for different storage transitions (added, modified, deleted, assigned)
+    // FIB-94: When bugfix_evm_storage_status is ON, setStorage must return the
+    // correct 4-state evmc_storage_status for each transition.
     syncWait([this]() -> Task<void> {
         blockHeader.setNumber(seq++);
         blockHeader.calculateHash(*hashImpl);
+
+        bcos::ledger::Features features;
+        features.set(bcos::ledger::Features::Flag::bugfix_evm_storage_status);
+        ledgerConfig.setFeatures(features);
 
         evmc_message message = {.kind = EVMC_CALL,
             .flags = 0,
@@ -617,37 +621,92 @@ BOOST_AUTO_TEST_CASE(setStorageStatus)
 
         auto* iface = hostContext.interface;
 
-        // Prepare a storage key and non-zero value
         evmc_bytes32 storageKey{};
         storageKey.bytes[31] = 0x42;
-
         evmc_bytes32 nonZeroValue{};
         nonZeroValue.bytes[31] = 0x01;
-
         evmc_bytes32 anotherNonZeroValue{};
         anotherNonZeroValue.bytes[31] = 0x02;
+        evmc_bytes32 zeroValue{};
 
-        evmc_bytes32 zeroValue{};  // all zeros
-
-        // 1) Write non-zero to empty slot -> EVMC_STORAGE_ADDED
         auto status1 =
             iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &nonZeroValue);
         BOOST_CHECK_EQUAL(status1, EVMC_STORAGE_ADDED);
 
-        // 2) Overwrite existing non-zero with different non-zero -> EVMC_STORAGE_MODIFIED
         auto status2 =
             iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &anotherNonZeroValue);
         BOOST_CHECK_EQUAL(status2, EVMC_STORAGE_MODIFIED);
 
-        // 3) Delete existing value (set to zero) -> EVMC_STORAGE_DELETED
         auto status3 =
             iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &zeroValue);
         BOOST_CHECK_EQUAL(status3, EVMC_STORAGE_DELETED);
 
-        // 4) Write zero to already-zero slot -> EVMC_STORAGE_ASSIGNED
         auto status4 =
             iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &zeroValue);
         BOOST_CHECK_EQUAL(status4, EVMC_STORAGE_ASSIGNED);
+
+        co_return;
+    }());
+}
+
+BOOST_AUTO_TEST_CASE(setStorageStatusLegacy)
+{
+    // FIB-94: Without the bugfix flag, preserve the legacy 2-state return so
+    // that existing chains do not fork on the fix.
+    syncWait([this]() -> Task<void> {
+        blockHeader.setNumber(seq++);
+        blockHeader.calculateHash(*hashImpl);
+
+        ledgerConfig.setFeatures(bcos::ledger::Features{});
+
+        evmc_message message = {.kind = EVMC_CALL,
+            .flags = 0,
+            .depth = 0,
+            .gas = 1000000,
+            .recipient = helloworldAddress,
+            .destination_ptr = nullptr,
+            .destination_len = 0,
+            .sender = {},
+            .sender_ptr = nullptr,
+            .sender_len = 0,
+            .input_data = nullptr,
+            .input_size = 0,
+            .value = {},
+            .create2_salt = {},
+            .code_address = helloworldAddress};
+        evmc_address origin = {};
+
+        evmc_bytes32 storageKey{};
+        storageKey.bytes[31] = 0x73;  // distinct key to avoid clashing with the other test
+        evmc_bytes32 nonZeroValue{};
+        nonZeroValue.bytes[31] = 0x01;
+        evmc_bytes32 anotherNonZeroValue{};
+        anotherNonZeroValue.bytes[31] = 0x02;
+        evmc_bytes32 zeroValue{};
+
+        HostContext<decltype(rollbackableStorage), decltype(rollbackableTransientStorage)>
+            hostContext(rollbackableStorage, rollbackableTransientStorage, blockHeader, message,
+                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, false, 0,
+                bcos::task::syncWait);
+        co_await hostContext.prepare();
+
+        auto* iface = hostContext.interface;
+
+        auto status1 =
+            iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &nonZeroValue);
+        BOOST_CHECK_EQUAL(status1, EVMC_STORAGE_MODIFIED);  // buggy: should be ADDED
+
+        auto status2 =
+            iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &anotherNonZeroValue);
+        BOOST_CHECK_EQUAL(status2, EVMC_STORAGE_MODIFIED);
+
+        auto status3 =
+            iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &zeroValue);
+        BOOST_CHECK_EQUAL(status3, EVMC_STORAGE_DELETED);
+
+        auto status4 =
+            iface->set_storage(&hostContext, &helloworldAddress, &storageKey, &zeroValue);
+        BOOST_CHECK_EQUAL(status4, EVMC_STORAGE_DELETED);  // buggy: should be ASSIGNED
 
         co_return;
     }());

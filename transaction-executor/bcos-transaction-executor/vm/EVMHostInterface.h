@@ -64,27 +64,32 @@ struct EVMHostInterface
         assert(!concepts::bytebuffer::equalTo(addr->bytes, executor::EMPTY_EVM_ADDRESS.bytes));
         auto& hostContext = static_cast<HostContextType&>(*context);
 
-        // Read existing value to determine correct storage status
-        auto existingValue = syncWait(hostContext.get(key));
-        bool existingIsZero =
-            concepts::bytebuffer::equalTo(existingValue.bytes, executor::EMPTY_EVM_BYTES32.bytes);
         bool newIsZero =
             concepts::bytebuffer::equalTo(value->bytes, executor::EMPTY_EVM_BYTES32.bytes);
 
         evmc_storage_status status;
-        if (newIsZero)
+        if (hostContext.ledgerConfig().features().get(
+                ledger::Features::Flag::bugfix_evm_storage_status))
         {
-            if (existingIsZero)
-                status = EVMC_STORAGE_ASSIGNED;  // zero -> zero: no change
+            // TODO: full EIP-2200 support — also report the 5 dirty-slot statuses
+            // (DELETED_ADDED, MODIFIED_DELETED, DELETED_RESTORED, ADDED_DELETED,
+            // MODIFIED_RESTORED). Requires tracking the transaction-original value
+            // per slot to distinguish clean (o == c) from dirty (o != c) writes.
+            auto existingValue = syncWait(hostContext.get(key));
+            const bool existingIsZero = concepts::bytebuffer::equalTo(
+                existingValue.bytes, executor::EMPTY_EVM_BYTES32.bytes);
+            if (newIsZero)
+            {
+                status = existingIsZero ? EVMC_STORAGE_ASSIGNED : EVMC_STORAGE_DELETED;
+            }
             else
-                status = EVMC_STORAGE_DELETED;  // non-zero -> zero: deletion
+            {
+                status = existingIsZero ? EVMC_STORAGE_ADDED : EVMC_STORAGE_MODIFIED;
+            }
         }
         else
         {
-            if (existingIsZero)
-                status = EVMC_STORAGE_ADDED;  // zero -> non-zero: new storage
-            else
-                status = EVMC_STORAGE_MODIFIED;  // non-zero -> non-zero: modification
+            status = newIsZero ? EVMC_STORAGE_DELETED : EVMC_STORAGE_MODIFIED;
         }
 
         syncWait(hostContext.set(key, value));
