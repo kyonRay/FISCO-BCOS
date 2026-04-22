@@ -201,7 +201,11 @@ task::Task<TransactionStatus> TxValidator::validateBalance(
                 << LOG_KV("error", boost::diagnostic_information(e));
         }
     }
-    // if gasPriceConfig is not set, we can skip the balance check
+    // Gas price config handling:
+    // - config set to 0  → skip all balance checks (free-gas chain)
+    // - config unset     → only check value (no baseline to validate gas cost against)
+    // - config set > 0   → FIB-75: also validate tx.effectiveGasPrice >= config and
+    //                       include gasLimit * effectiveGasPrice in required amount
     bool skipBalanceCheck = false;
     u256 systemGasPrice{0};
     if (auto gasPriceConfig =
@@ -220,23 +224,29 @@ task::Task<TransactionStatus> TxValidator::validateBalance(
             systemGasPrice = u256(gasPriceStr);
         }
     }
-    // FIB-75: validate effective gas price >= systemGasPrice, then use it for gas cost.
-    // effectiveGasPrice() reads gasPrice for legacy/EIP-2930 txs and maxFeePerGas for EIP-1559+.
     if (!skipBalanceCheck)
     {
-        const auto txGasPrice = protocol::effectiveGasPrice(_tx);
-
-        if (txGasPrice < systemGasPrice)
+        u256 gasCost{0};
+        // Only validate gas price / gas cost when systemGasPrice is configured (> 0)
+        if (systemGasPrice > 0)
         {
-            TX_VALIDATOR_CHECKER_LOG(TRACE)
-                << LOG_BADGE("ValidateTransactionWithState")
-                << LOG_DESC("tx gasPrice below system minimum") << LOG_KV("sender", sender)
-                << LOG_KV("txGasPrice", txGasPrice) << LOG_KV("systemGasPrice", systemGasPrice);
-            co_return TransactionStatus::InsufficientFunds;
+            // effectiveGasPrice() handles legacy (gasPrice field) and EIP-1559 (maxFeePerGas)
+            const auto txGasPrice = protocol::effectiveGasPrice(_tx);
+            if (txGasPrice < systemGasPrice)
+            {
+                TX_VALIDATOR_CHECKER_LOG(TRACE)
+                    << LOG_BADGE("ValidateTransactionWithState")
+                    << LOG_DESC("tx gasPrice below system minimum") << LOG_KV("sender", sender)
+                    << LOG_KV("txGasPrice", txGasPrice) << LOG_KV("systemGasPrice", systemGasPrice);
+                co_return TransactionStatus::InsufficientFunds;
+            }
+            if (_tx.gasLimit() > 0)
+            {
+                gasCost = u256(_tx.gasLimit()) * txGasPrice;
+            }
         }
 
         auto txValue = u256(_tx.value());
-        auto gasCost = (_tx.gasLimit() > 0) ? u256(_tx.gasLimit()) * txGasPrice : u256(0);
         if (auto totalRequired = txValue + gasCost;
             balanceValue < totalRequired || balanceValue == 0)
         {
