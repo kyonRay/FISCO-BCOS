@@ -1,4 +1,5 @@
 #include "AdminIPCClient.h"
+#include <sys/socket.h>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
 #include <boost/asio/read.hpp>
@@ -33,24 +34,24 @@ std::string readAll(Socket& socket)
     }
     return payload;
 }
+
+void setNoSigPipe(Socket& socket)
+{
+#ifdef SO_NOSIGPIPE
+    int enable = 1;
+    ::setsockopt(socket.native_handle(), SOL_SOCKET, SO_NOSIGPIPE, &enable, sizeof(enable));
+#endif
+}
 }  // namespace
 
 namespace bcos::air::cli
 {
 bool AdminIPCClient::reachable(const std::string& socketPath) const
 {
-    try
-    {
-        boost::asio::io_context io;
-        Socket socket(io);
-        socket.connect(Endpoint(socketPath));
-        socket.close();
-        return true;
-    }
-    catch (...)
-    {
-        return false;
-    }
+    AdminInspectRequest request;
+    request.command = "inspect";
+    request.timeoutMs = 500;
+    return this->request(socketPath, request).ok;
 }
 
 AdminInspectReply AdminIPCClient::request(
@@ -61,6 +62,7 @@ AdminInspectReply AdminIPCClient::request(
         boost::asio::io_context io;
         Socket socket(io);
         socket.connect(Endpoint(socketPath));
+        setNoSigPipe(socket);
 
         auto payload = serializeAdminInspectRequest(request);
         payload.push_back('\n');

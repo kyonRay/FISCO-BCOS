@@ -34,13 +34,27 @@ void writeAll(int fd, const std::string& payload)
     size_t offset = 0;
     while (offset < payload.size())
     {
+#ifdef MSG_NOSIGNAL
+        auto written = ::send(fd, payload.data() + offset, payload.size() - offset, MSG_NOSIGNAL);
+#else
         auto written = ::write(fd, payload.data() + offset, payload.size() - offset);
+#endif
         if (written <= 0)
         {
             return;
         }
         offset += static_cast<size_t>(written);
     }
+}
+
+void setNoSigPipe(int fd)
+{
+#ifdef SO_NOSIGPIPE
+    int enable = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enable, sizeof(enable));
+#else
+    (void)fd;
+#endif
 }
 }  // namespace
 
@@ -140,10 +154,16 @@ void AdminIPCServer::runAcceptLoop()
 
 void AdminIPCServer::handleConnection(int nativeSocket)
 {
+    setNoSigPipe(nativeSocket);
+
     AdminInspectReply reply;
     try
     {
         auto payload = readRequestLine(nativeSocket);
+        if (payload.empty())
+        {
+            return;
+        }
         auto request = deserializeAdminInspectRequest(payload);
         if (!m_handler)
         {

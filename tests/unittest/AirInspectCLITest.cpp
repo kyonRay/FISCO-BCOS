@@ -1,3 +1,5 @@
+#include "fisco-bcos-air/cli/AdminIPCClient.h"
+#include "fisco-bcos-air/cli/AdminIPCServer.h"
 #include "fisco-bcos-air/cli/FallbackInspectors.h"
 #include "fisco-bcos-air/cli/InspectApplication.h"
 #include "fisco-bcos-air/cli/InspectConfig.h"
@@ -137,4 +139,31 @@ BOOST_AUTO_TEST_CASE(fallbackResponseReportsRpcAndLogsSourceEvenWhenAdminEnabled
 
     auto response = bcos::air::cli::InspectApplication::buildResponse(request, config);
     BOOST_CHECK_EQUAL(response.source, "rpc+logs");
+}
+
+BOOST_AUTO_TEST_CASE(reachabilityProbeDoesNotBreakAdminIpcServer)
+{
+    TempInspectConfigFile file;
+    bcos::air::cli::InspectConfig config;
+    config.adminEnabled = true;
+    config.adminIPCPath = (file.directory / "run/admin.sock").string();
+
+    bcos::air::cli::AdminIPCServer server;
+    server.start(config, [](const auto& request) {
+        bcos::air::cli::AdminInspectReply reply;
+        reply.ok = (request.command == "inspect");
+        reply.payload["source"] = "admin-ipc";
+        return reply;
+    });
+
+    bcos::air::cli::AdminIPCClient client;
+    BOOST_CHECK(client.reachable(config.adminIPCPath));
+
+    bcos::air::cli::AdminInspectRequest request;
+    request.command = "inspect";
+    auto reply = client.request(config.adminIPCPath, request);
+    BOOST_CHECK(reply.ok);
+    BOOST_CHECK_EQUAL(reply.payload["source"].asString(), "admin-ipc");
+
+    server.stop();
 }
