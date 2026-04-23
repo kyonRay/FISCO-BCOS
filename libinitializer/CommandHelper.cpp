@@ -22,6 +22,8 @@
 #include <include/BuildInfo.h>
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
+#include <stdexcept>
+#include <vector>
 
 void bcos::initializer::printVersion()
 {
@@ -72,8 +74,26 @@ void bcos::initializer::initCommandLine(int argc, char* argv[])
     }
 }
 
-bcos::initializer::Params bcos::initializer::initAirNodeCommandLine(
-    int argc, const char* argv[], bool _autoSendTx)
+namespace
+{
+std::vector<std::string> normalizeAirNodeArgs(int argc, const char* argv[])
+{
+    std::vector<std::string> normalizedArgs;
+    normalizedArgs.reserve(argc > 1 ? static_cast<size_t>(argc - 1) : 0U);
+    for (int i = 1; i < argc; ++i)
+    {
+        auto arg = std::string(argv[i]);
+        if (arg == "-cli")
+        {
+            normalizedArgs.emplace_back("--cli");
+            continue;
+        }
+        normalizedArgs.emplace_back(std::move(arg));
+    }
+    return normalizedArgs;
+}
+
+boost::program_options::options_description buildAirNodeOptions(bool autoSendTx)
 {
     boost::program_options::options_description main_options("Usage of FISCO-BCOS");
     main_options.add_options()("help,h", "print help information")(
@@ -86,69 +106,88 @@ bcos::initializer::Params bcos::initializer::initAirNodeCommandLine(
         "generate snapshot with or without txs and receipts, if true generate snapshot with txs "
         "and receipts")(
         "output,o", boost::program_options::value<std::string>(), "snapshot output directory")(
-        "import,i", boost::program_options::value<std::string>(), "import snapshot from directory");
+        "import,i", boost::program_options::value<std::string>(), "import snapshot from directory")(
+        "cli", "run inspect CLI mode")("json", "render inspect output as JSON")("verbose",
+        "show more inspect details")("source", "show selected inspect data source")("timeout",
+        boost::program_options::value<int>()->default_value(3000),
+        "inspect timeout in milliseconds")(
+        "tail", boost::program_options::value<int>(), "tail line count for inspect logs")(
+        "level", boost::program_options::value<std::string>(), "log level filter");
 
-    if (_autoSendTx)
+    if (autoSendTx)
     {
         main_options.add_options()(
             "txSpeed,t", boost::program_options::value<float>(), "transaction generate speed");
     }
+
+    return main_options;
+}
+
+void fillCLIRequest(const boost::program_options::variables_map& vm,
+    const std::vector<std::string>& positional, bcos::initializer::CLIRequest& request)
+{
+    if (positional.empty())
+    {
+        throw std::runtime_error("cli command is required");
+    }
+
+    request.command = positional.at(0);
+    if (request.command != "inspect")
+    {
+        throw std::runtime_error("unsupported cli command: " + request.command);
+    }
+
+    if (positional.size() > 1)
+    {
+        request.domain = positional.at(1);
+    }
+    if (positional.size() > 2)
+    {
+        throw std::runtime_error("too many cli positional arguments");
+    }
+
+    request.jsonOutput = vm.count("json");
+    request.verbose = vm.count("verbose");
+    request.showSource = vm.count("source");
+    request.timeoutMs = vm["timeout"].as<int>();
+    if (vm.count("tail"))
+    {
+        request.tail = vm["tail"].as<int>();
+    }
+    if (vm.count("level"))
+    {
+        request.logLevel = vm["level"].as<std::string>();
+    }
+}
+}  // namespace
+
+bcos::initializer::Params bcos::initializer::parseAirNodeCommandLine(
+    int argc, const char* argv[], bool _autoSendTx)
+{
+    auto normalizedArgs = normalizeAirNodeArgs(argc, argv);
+    auto main_options = buildAirNodeOptions(_autoSendTx);
     boost::program_options::variables_map vm;
-    try
-    {
-        boost::program_options::store(
-            boost::program_options::parse_command_line(argc, argv, main_options), vm);
-    }
-    catch (...)
-    {
-        std::cout << "invalid parameters" << std::endl;
-        std::cout << main_options << std::endl;
-        exit(0);
-    }
-    /// help information
-    if (vm.count("help") || vm.count("h"))
-    {
-        std::cout << main_options << std::endl;
-        exit(0);
-    }
-    /// version information
-    if (vm.count("version") || vm.count("v"))
-    {
-        bcos::initializer::printVersion();
-        exit(0);
-    }
-    std::string configPath("./config.ini");
-    if (vm.count("config"))
-    {
-        configPath = vm["config"].as<std::string>();
-    }
-    if (vm.count("c"))
-    {
-        configPath = vm["c"].as<std::string>();
-    }
-    std::string genesisFilePath("./config.genesis");
-    if (vm.count("genesis"))
-    {
-        genesisFilePath = vm["genesis"].as<std::string>();
-    }
-    if (vm.count("g"))
-    {
-        genesisFilePath = vm["g"].as<std::string>();
-    }
+    auto parsed = boost::program_options::command_line_parser(normalizedArgs)
+                      .options(main_options)
+                      .allow_unregistered()
+                      .run();
+    boost::program_options::store(parsed, vm);
+    boost::program_options::notify(vm);
+
+    auto configPath = vm["config"].as<std::string>();
+    auto genesisFilePath = vm["genesis"].as<std::string>();
     if (!boost::filesystem::exists(configPath))
     {
-        std::cout << "config \'" << configPath << "\' not found!";
-        exit(0);
+        throw std::runtime_error("config '" + configPath + "' not found!");
     }
     if (!boost::filesystem::exists(genesisFilePath))
     {
-        std::cout << "genesis config \'" << genesisFilePath << "\' not found!";
-        exit(0);
+        throw std::runtime_error("genesis config '" + genesisFilePath + "' not found!");
     }
-    float txSpeed = 10;
+    float txSpeed = 10.0f;
     if (_autoSendTx)
     {
-        if (vm.count("txSpeed") || vm.count("t"))
+        if (vm.count("txSpeed"))
         {
             txSpeed = vm["txSpeed"].as<float>();
         }
@@ -190,5 +229,58 @@ bcos::initializer::Params bcos::initializer::initAirNodeCommandLine(
         snapshotPath = vm["import"].as<std::string>();
     }
 
-    return bcos::initializer::Params{configPath, genesisFilePath, snapshotPath, txSpeed, op};
+    Params params;
+    params.configFilePath = configPath;
+    params.genesisFilePath = genesisFilePath;
+    params.snapshotPath = snapshotPath;
+    params.txSpeed = txSpeed;
+    params.op = op;
+    params.cliMode = vm.count("cli");
+    if (params.cliMode)
+    {
+        auto positional = boost::program_options::collect_unrecognized(
+            parsed.options, boost::program_options::include_positional);
+        fillCLIRequest(vm, positional, params.cliRequest);
+    }
+    return params;
+}
+
+bcos::initializer::Params bcos::initializer::initAirNodeCommandLine(
+    int argc, const char* argv[], bool _autoSendTx)
+{
+    auto normalizedArgs = normalizeAirNodeArgs(argc, argv);
+    auto main_options = buildAirNodeOptions(_autoSendTx);
+    try
+    {
+        boost::program_options::variables_map vm;
+        auto parsed = boost::program_options::command_line_parser(normalizedArgs)
+                          .options(main_options)
+                          .allow_unregistered()
+                          .run();
+        boost::program_options::store(parsed, vm);
+        if (vm.count("help") || vm.count("h"))
+        {
+            std::cout << main_options << std::endl;
+            exit(0);
+        }
+        if (vm.count("version") || vm.count("v"))
+        {
+            bcos::initializer::printVersion();
+            exit(0);
+        }
+        auto params = parseAirNodeCommandLine(argc, argv, _autoSendTx);
+        if (params.cliMode && params.op != Params::operation::None)
+        {
+            std::cout << "cli mode can not be used with other operations" << std::endl;
+            std::cout << main_options << std::endl;
+            exit(0);
+        }
+        return params;
+    }
+    catch (std::exception const& e)
+    {
+        std::cout << "invalid parameters: " << e.what() << std::endl;
+        std::cout << main_options << std::endl;
+        exit(0);
+    }
 }

@@ -24,6 +24,7 @@
  */
 #include "AirNodeInitializer.h"
 #include "Common.h"
+#include "cli/InspectApplication.h"
 #include "libinitializer/CommandHelper.h"
 #include <bcos-crypto/signature/key/KeyFactoryImpl.h>
 #include <bcos-tool/NodeConfig.h>
@@ -57,6 +58,10 @@ int main(int argc, const char* argv[])
     try
     {
         auto param = bcos::initializer::initAirNodeCommandLine(argc, argv, false);
+        if (param.cliMode)
+        {
+            return bcos::air::cli::runAirInspectCLI(param);
+        }
         if (param.op != bcos::initializer::Params::operation::None)
         {
             if (param.hasOp(bcos::initializer::Params::operation::Prune))

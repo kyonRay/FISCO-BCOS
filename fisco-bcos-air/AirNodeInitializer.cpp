@@ -19,6 +19,8 @@
  * @date 2021-10-28
  */
 #include "AirNodeInitializer.h"
+#include "cli/AdminInspectors.h"
+#include "cli/InspectConfig.h"
 #include "libinitializer/Common.h"
 #include <bcos-boostssl/websocket/RawWsMessage.h>
 #include <bcos-crypto/signature/key/KeyFactoryImpl.h>
@@ -45,6 +47,7 @@ void AirNodeInitializer::init(std::string const& _configFilePath, std::string co
 
     boost::property_tree::ptree ptree;
     boost::property_tree::read_ini(_configFilePath, ptree);
+    m_adminInspectConfig = bcos::air::cli::InspectConfig::load(_configFilePath);
 
     m_logInitializer = std::make_shared<BoostLogInitializer>();
     m_logInitializer->initLog(_configFilePath);
@@ -150,12 +153,26 @@ void AirNodeInitializer::start()
 
         started.wait(false);
     }
+
+    if (m_adminInspectConfig && m_adminInspectConfig->adminEnabled)
+    {
+        m_adminIPCServer = std::make_shared<bcos::air::cli::AdminIPCServer>();
+        m_adminIPCServer->start(*m_adminInspectConfig, [this](const auto& request) {
+            return bcos::air::cli::buildAdminInspectReply(
+                request, *m_adminInspectConfig, *m_nodeInitializer, m_rpc, m_gateway);
+        });
+    }
 }
 
 void AirNodeInitializer::stop()
 {
     try
     {
+        if (m_adminIPCServer)
+        {
+            m_adminIPCServer->stop();
+            m_adminIPCServer.reset();
+        }
         if (m_rpc)
         {
             m_rpc->stop();
