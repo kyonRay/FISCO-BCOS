@@ -71,6 +71,22 @@ struct MockStorage
     using Key = int;
     using Value = int;
 
+    auto readSomeRaw(auto&& keys, auto&&...)
+        -> task::Task<std::vector<storage2::StorageValueType<int>>>
+    {
+        std::vector<storage2::StorageValueType<int>> result;
+        for ([[maybe_unused]] auto&& key : keys)
+        {
+            result.emplace_back(100);
+        }
+        co_return result;
+    }
+
+    auto readOneRaw(auto&& key, auto&&...) -> task::Task<storage2::StorageValueType<int>>
+    {
+        co_return 100;
+    }
+
     auto readOne(auto&& key) -> task::Task<std::optional<int>>
     {
         BOOST_FAIL("Unexcept to here!");
@@ -89,9 +105,8 @@ BOOST_AUTO_TEST_CASE(directFlag)
         MockStorage lhsStorage;
         ReadWriteSetStorage<decltype(lhsStorage)> firstStorage(lhsStorage);
 
-        auto value = co_await storage2::readOne(firstStorage, 100, storage2::DIRECT);
-        BOOST_CHECK(value);
-        BOOST_CHECK_EQUAL(*value, 100);
+        auto value = co_await firstStorage.readOneRaw(100, storage2::DIRECT);
+        BOOST_CHECK_EQUAL(std::get<int>(value), 100);
     }());
 }
 
