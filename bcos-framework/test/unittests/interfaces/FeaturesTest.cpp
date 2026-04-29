@@ -184,6 +184,7 @@ BOOST_AUTO_TEST_CASE(feature)
         "bugfix_auth_table_squatting",
         "bugfix_v1_exec_error_gas_used",
         "bugfix_v1_precompiled_error_gas",
+        "bugfix_clamp_gas_left_on_error",
         "feature_dmc2serial",
         "feature_sharding",
         "feature_rpbft",

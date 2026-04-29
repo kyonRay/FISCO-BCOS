@@ -64,6 +64,7 @@ public:
         bugfix_v1_exec_error_gas_used,
         bugfix_v1_precompiled_error_gas,  // FIB-76/79/80: precompiled gas overflow check,
                                           // exception safety, and use remaining gas on revert
+        bugfix_clamp_gas_left_on_error,   // FIB-78: clamp gas_left to 0 for fatal EVM errors
         feature_dmc2serial,
         feature_sharding,
         feature_rpbft,
