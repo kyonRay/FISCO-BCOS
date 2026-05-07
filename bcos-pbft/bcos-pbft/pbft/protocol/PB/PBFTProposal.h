@@ -33,7 +33,11 @@ public:
     PBFTProposal() : Proposal()
     {
         m_pbftRawProposal = std::make_shared<PBFTRawProposal>();
-        m_pbftRawProposal->set_allocated_proposal(rawProposal().get());
+        // FIB-122: aliasing shared_ptr ties Proposal::m_rawProposal's lifetime to
+        // m_pbftRawProposal so we don't dual-own (or accidentally delete) protobuf-
+        // owned submessage memory.
+        setRawProposal(
+            std::shared_ptr<RawProposal>(m_pbftRawProposal, m_pbftRawProposal->mutable_proposal()));
     }
     explicit PBFTProposal(bytesConstRef _data) : Proposal()
     {
@@ -41,12 +45,13 @@ public:
         decode(_data);
     }
     explicit PBFTProposal(std::shared_ptr<PBFTRawProposal> _pbftRawProposal)
-      : Proposal(std::shared_ptr<RawProposal>(_pbftRawProposal->mutable_proposal()))
+      : Proposal(
+            std::shared_ptr<RawProposal>(_pbftRawProposal, _pbftRawProposal->mutable_proposal()))
     {
         m_pbftRawProposal = _pbftRawProposal;
     }
 
-    ~PBFTProposal() override { m_pbftRawProposal->unsafe_arena_release_proposal(); }
+    ~PBFTProposal() override = default;
 
     std::shared_ptr<PBFTRawProposal> pbftRawProposal() { return m_pbftRawProposal; }
 
@@ -112,7 +117,11 @@ public:
         // FIB-123: reject excessive nodeList to prevent memory exhaustion
         validateRepeatedSize(
             m_pbftRawProposal->nodelist(), MAX_PBFT_REPEATED_FIELD_SIZE, "nodeList");
-        setRawProposal(std::shared_ptr<RawProposal>(m_pbftRawProposal->mutable_proposal()));
+        // FIB-122: aliasing shared_ptr instead of owning shared_ptr to prevent
+        // double-free when m_pbftRawProposal's proposal field is replaced (e.g. by
+        // a subsequent decode call's ParseFromArray).
+        setRawProposal(
+            std::shared_ptr<RawProposal>(m_pbftRawProposal, m_pbftRawProposal->mutable_proposal()));
     }
 
 private:
