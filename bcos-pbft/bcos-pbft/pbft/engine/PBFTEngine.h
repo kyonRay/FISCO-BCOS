@@ -22,6 +22,7 @@
 #include "PBFTLogSync.h"
 #include "bcos-framework/ledger/LedgerInterface.h"
 #include "bcos-pbft/core/ConsensusEngine.h"
+#include "bcos-pbft/pbft/utilities/PBFTPipeline.h"
 #include <bcos-utilities/Error.h>
 #include <bcos-utilities/Timer.h>
 #include <oneapi/tbb/concurrent_queue.h>
@@ -249,6 +250,9 @@ protected:
     // Prevents the same PrePrepare proposal from being re-submitted to
     // verifyProposal() while a prior verification is still pending.
     std::unordered_set<std::string> m_inFlightProposals;
+
+    // FIB-145 / FIB-146: 3-stage admission pipeline applied before m_msgQueue.push().
+    PBFTPipeline m_pipeline;
 };
 }  // namespace consensus
 }  // namespace bcos

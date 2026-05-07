@@ -544,6 +544,16 @@ void PBFTEngine::onReceivePBFTMessage(Error::Ptr _error, NodeIDPtr _fromNode, by
             }
             return;
         }
+        // FIB-145 / FIB-146: 3-stage admission pipeline.
+        // Stage 1 drops stale-height messages; Stage 3 enforces per-peer capacity
+        // for non-safety-critical packets. Commit/CheckPoint always pass through.
+        auto lastApplied = m_config->committedProposal() ?
+                               m_config->committedProposal()->index() :
+                               static_cast<bcos::protocol::BlockNumber>(0);
+        if (!m_pipeline.admit(pbftMsg, lastApplied))
+        {
+            return;
+        }
         m_msgQueue.push(pbftMsg);
         m_signalled.notify_all();
     }
@@ -605,6 +615,8 @@ void PBFTEngine::executeWorker()
             }
             return;
         }
+        // FIB-145: notify pipeline that a message was consumed (decrements per-peer counter)
+        m_pipeline.consumed(pbftMsg);
         handleMsg(pbftMsg);
     }
     else
