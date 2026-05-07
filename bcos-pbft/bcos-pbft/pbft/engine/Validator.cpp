@@ -129,27 +129,26 @@ void TxsValidator::asyncResetTxsFlag(
             {
                 return;
             }
-            // must ensure asyncResetTxsFlag success before seal new next blocks
+            // FIB-143: check _error FIRST. Erase the proposal from
+            // m_resettingProposals only on success. On failure, leave the hash
+            // in place so verifyCompletedHook does NOT fire and sealing stays
+            // gated on the unfinished reset.
+            if (_error != nullptr)
+            {
+                PBFT_LOG(WARNING) << LOG_DESC("asyncMarkTxs failed")
+                                  << LOG_KV("code", _error->errorCode())
+                                  << LOG_KV("msg", _error->errorMessage());
+                return;
+            }
+            // success: clear our reset request before sealing the next block
             if (_flag)
             {
                 validator->eraseResettingProposal(proposalHash);
             }
-            if (_error == nullptr)
-            {
-                PBFT_LOG(INFO) << LOG_DESC("asyncMarkTxs success")
-                               << LOG_KV("index", proposalNumber)
-                               << LOG_KV("hash", proposalHash.abridged()) << LOG_KV("flag", _flag)
-                               << LOG_KV("markT", utcSteadyTime() - startT)
-                               << LOG_KV("emptyTxBatchHash", _emptyTxBatchHash);
-                return;
-            }
-            PBFT_LOG(WARNING) << LOG_DESC("asyncMarkTxs failed")
-                              << LOG_KV("code", _error->errorCode())
-                              << LOG_KV("msg", _error->errorMessage());
-            if (_flag)
-            {
-                validator->insertResettingProposal(proposalHash);
-            }
+            PBFT_LOG(INFO) << LOG_DESC("asyncMarkTxs success") << LOG_KV("index", proposalNumber)
+                           << LOG_KV("hash", proposalHash.abridged()) << LOG_KV("flag", _flag)
+                           << LOG_KV("markT", utcSteadyTime() - startT)
+                           << LOG_KV("emptyTxBatchHash", _emptyTxBatchHash);
         });
 }
 
