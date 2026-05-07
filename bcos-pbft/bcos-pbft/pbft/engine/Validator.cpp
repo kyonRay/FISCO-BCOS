@@ -19,6 +19,7 @@
  * @date 2021-04-21
  */
 #include "Validator.h"
+#include <bcos-framework/protocol/CommonError.h>
 using namespace bcos;
 using namespace bcos::consensus;
 using namespace bcos::crypto;
@@ -138,6 +139,26 @@ void TxsValidator::asyncResetTxsFlag(
                 PBFT_LOG(WARNING) << LOG_DESC("asyncMarkTxs failed")
                                   << LOG_KV("code", _error->errorCode())
                                   << LOG_KV("msg", _error->errorMessage());
+                // FIB-144: TransactionsMissing is a transient / recoverable
+                // failure (txpool didn't have all referenced txs yet). Without
+                // a removal here insertResettingProposal in a later
+                // asyncResetTxsFlag would return false and suppress every
+                // retry — a byzantine leader could permanently halt sealing
+                // by submitting a proposal with unknown tx hashes. Removing
+                // the hash lets the next PrePrepare for the same proposal
+                // (e.g. via view change) re-trigger marking once the data
+                // arrives. Other errors keep the FIB-143 retain-on-failure
+                // semantics.
+                if (_flag &&
+                    _error->errorCode() == bcos::protocol::CommonError::TransactionsMissing)
+                {
+                    validator->eraseResettingProposal(proposalHash);
+                    PBFT_LOG(INFO) << LOG_DESC(
+                                          "FIB-144: TransactionsMissing - removed proposal from "
+                                          "resetting set, awaiting data arrival")
+                                   << LOG_KV("hash", proposalHash.abridged())
+                                   << LOG_KV("index", proposalNumber);
+                }
                 return;
             }
             // success: clear our reset request before sealing the next block
