@@ -22,7 +22,7 @@
  *             Commit and CheckPoint packets are NEVER dropped to preserve safety.
  *   Stage 2 – LRU per-peer dedup: drop messages already recently seen from
  *             the same peer (keyed by packetType + index + hash).
- *             (E.6a: passthrough stub; E.6b: real LRU cache — see FIB-146.)
+ *             Per-peer bounded LRU; evicts oldest entry on capacity overflow.
  *   Stage 3 – Per-type admission capacity:
  *             PrePrepare and Prepare: bounded queue size per-peer; on overflow set
  *             backpressure flag for that peer, suppress further PrePrepare/Prepare
@@ -51,15 +51,48 @@ namespace bcos::consensus
 {
 
 // ─── Stage 2 LRU per-peer cache ─────────────────────────────────────────────
-// FIB-146: passthrough stub (E.6a). Full LRU implementation in E.6b commit.
+// FIB-146: real per-peer LRU dedup cache (replaces E.6a passthrough stub).
+//
+// Keys are strings of the form "<packetType>:<blockIndex>:<hashHex>".
+// When capacity is reached, the least-recently-used entry is evicted to make
+// room. This bounds per-peer memory while still detecting near-term duplicates.
+//
+// Thread-safety: NOT thread-safe. The caller (PBFTPipeline) holds m_lruMutex
+// when calling seenAndInsert(), so no internal locking is needed.
 class PeerLRUCache
 {
 public:
-    explicit PeerLRUCache(size_t /*capacity*/) {}
+    explicit PeerLRUCache(size_t capacity) : m_capacity(capacity == 0 ? 1 : capacity) {}
 
     // Returns true if the key has been seen recently (should be dropped).
-    // Stub: always returns false (no dedup yet).
-    bool seenAndInsert(std::string const& /*key*/) { return false; }
+    // Inserts the key into the cache (evicting the LRU entry if full).
+    bool seenAndInsert(std::string const& key)
+    {
+        auto it = m_map.find(key);
+        if (it != m_map.end())
+        {
+            // Cache hit: move to front (most recently used)
+            m_list.splice(m_list.begin(), m_list, it->second);
+            return true;
+        }
+
+        // Cache miss: evict LRU entry if at capacity
+        if (m_list.size() >= m_capacity)
+        {
+            m_map.erase(m_list.back());
+            m_list.pop_back();
+        }
+
+        // Insert new key at front
+        m_list.push_front(key);
+        m_map.emplace(key, m_list.begin());
+        return false;
+    }
+
+private:
+    size_t m_capacity;
+    std::list<std::string> m_list;  // front = most recently used
+    std::unordered_map<std::string, std::list<std::string>::iterator> m_map;
 };
 
 // ─── Admission pipeline ───────────────────────────────────────────────────────
@@ -105,8 +138,10 @@ public:
             return false;
         }
 
-        // ── Stage 2: LRU per-peer dedup (stub — always passes through) ──────
-        // FIB-146 replaces this stub with a real per-peer LRU.
+        // ── Stage 2: LRU per-peer dedup (FIB-146) ───────────────────────────
+        // Drop messages whose (type:index:hash) tuple was recently seen from
+        // this peer. The LRU cache evicts the oldest entry when full, bounding
+        // per-peer memory while still catching near-term re-queued duplicates.
         {
             auto& cache = getOrCreateCache(peerKey);
             std::string dedupKey =
