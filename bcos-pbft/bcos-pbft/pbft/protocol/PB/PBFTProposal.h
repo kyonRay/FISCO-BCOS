@@ -20,6 +20,7 @@
  */
 #pragma once
 #include "bcos-pbft/core/Proposal.h"
+#include "bcos-pbft/pbft/interfaces/PBFTProposalInterface.h"
 #include "bcos-pbft/pbft/protocol/proto/PBFT.pb.h"
 namespace bcos
 {
@@ -105,6 +106,12 @@ public:
     void decode(bytesConstRef _data) override
     {
         bcos::protocol::decodePBObject(m_pbftRawProposal, _data);
+        // FIB-120: reject excessive signatureList to prevent memory exhaustion
+        validateRepeatedSize(
+            m_pbftRawProposal->signaturelist(), MAX_PBFT_REPEATED_FIELD_SIZE, "signatureList");
+        // FIB-123: reject excessive nodeList to prevent memory exhaustion
+        validateRepeatedSize(
+            m_pbftRawProposal->nodelist(), MAX_PBFT_REPEATED_FIELD_SIZE, "nodeList");
         setRawProposal(std::shared_ptr<RawProposal>(m_pbftRawProposal->mutable_proposal()));
     }
 
