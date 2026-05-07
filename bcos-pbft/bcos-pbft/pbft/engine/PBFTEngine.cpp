@@ -946,6 +946,22 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
     }
     auto block = m_config->blockFactory().createBlock(
         _prePrepareMsg->consensusProposal()->data(), false, false);
+    // FIB-142 receiver-side: recompute the decoded block hash and reject any
+    // pre-prepare whose carried proposal hash does not bind the actual block
+    // body. Without this check, a byzantine leader can equivocate by signing
+    // hash(A) and broadcasting body(B) under the same proposal hash.
+    block->blockHeader()->calculateHash(*m_config->blockFactory().cryptoSuite()->hashImpl());
+    if (block->blockHeader()->hash() != _prePrepareMsg->consensusProposal()->hash())
+    {
+        PBFT_LOG(WARNING) << LOG_DESC(
+                                 "handlePrePrepareMsg: reject for decoded block hash "
+                                 "does not match proposal hash (FIB-142)")
+                          << LOG_KV(
+                                 "expected", _prePrepareMsg->consensusProposal()->hash().abridged())
+                          << LOG_KV("decoded", block->blockHeader()->hash().abridged())
+                          << printPBFTMsgInfo(_prePrepareMsg);
+        return false;
+    }
     // add the prePrepareReq to the cache
     if (!_needVerifyProposal)
     {
