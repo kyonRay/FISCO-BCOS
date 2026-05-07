@@ -74,7 +74,13 @@ protected:
 private:
     std::atomic<int64_t> m_adjustedTimeout = 0;
     std::atomic<int64_t> m_changeCycle = 0;
+    // FIB-135: bound the exponential back-off so that view-change timeout stays
+    // within a reasonable multiple of the base consensus_timeout.
+    // With base=1.5 and c_maxChangeCycle=3: max multiplier = 1.5^3 = 3.375x.
+    // Previously c_maxChangeCycle=10 allowed 1.5^10 ≈ 57.7x, meaning a 3s base
+    // timeout grew to ~173 seconds, causing prolonged stalls every time a slow
+    // or isolated node was elected rPBFT leader.
     constexpr static double m_base = 1.5;
-    int64_t c_maxChangeCycle = 10;
+    int64_t c_maxChangeCycle = 3;
 };
 }  // namespace bcos::consensus
