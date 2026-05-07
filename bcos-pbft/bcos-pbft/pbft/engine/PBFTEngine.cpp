@@ -783,10 +783,24 @@ CheckResult PBFTEngine::checkSignature(PBFTBaseMessageInterface::Ptr _req)
         return CheckResult::INVALID;
     }
     auto publicKey = nodeInfo->nodeID;
-    if (!_req->verifySignature(m_config->cryptoSuite(), publicKey))
+    // FIB-136: the secp256k1 signature backend throws on malformed input (e.g.
+    // invalid length or recovery id) instead of returning false. Catch here and
+    // treat as INVALID so malformed packets from a Byzantine peer cannot cause
+    // exception churn and ERROR log spam in the consensus worker loop.
+    try
     {
-        PBFT_LOG(WARNING) << LOG_DESC("checkSignature failed for invalid signature")
-                          << printPBFTMsgInfo(_req);
+        if (!_req->verifySignature(m_config->cryptoSuite(), publicKey))
+        {
+            PBFT_LOG(WARNING) << LOG_DESC("checkSignature failed for invalid signature")
+                              << printPBFTMsgInfo(_req);
+            return CheckResult::INVALID;
+        }
+    }
+    catch (std::exception const& _e)
+    {
+        PBFT_LOG(DEBUG) << LOG_DESC("checkSignature: verifySignature threw, treating as invalid")
+                        << printPBFTMsgInfo(_req)
+                        << LOG_KV("what", boost::diagnostic_information(_e));
         return CheckResult::INVALID;
     }
     return CheckResult::VALID;
