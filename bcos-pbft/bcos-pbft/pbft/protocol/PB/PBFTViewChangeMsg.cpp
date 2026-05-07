@@ -78,6 +78,10 @@ void PBFTViewChangeMsg::deserializeToObject()
 {
     PBFTBaseMessage::deserializeToObject();
     m_preparedProposalList->clear();
+    // FIB-121 / Issue #3: reject oversized preparedProposals before allocating
+    // any wrappers, preventing memory-exhaustion DoS from malicious peers.
+    validateRepeatedSize(
+        m_rawViewChange->preparedproposals(), MAX_PBFT_REPEATED_FIELD_SIZE, "preparedProposals");
     std::shared_ptr<PBFTRawProposal> rawCommittedProposal(
         m_rawViewChange->mutable_committedproposal());
     m_committedProposal = std::make_shared<PBFTProposal>(rawCommittedProposal);
