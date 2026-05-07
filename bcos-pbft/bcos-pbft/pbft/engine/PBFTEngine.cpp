@@ -881,6 +881,20 @@ bool PBFTEngine::isSyncingHigher()
     return syncNumber >= (committedIndex + m_config->waterMarkLimit());
 }
 
+// FIB-132: build an in-flight dedup key from (index, hash, view)
+std::string PBFTEngine::inFlightKey(std::shared_ptr<PBFTBaseMessageInterface> const& _msg)
+{
+    return std::to_string(_msg->index()) + ":" + _msg->hash().hex() + ":" +
+           std::to_string(_msg->view());
+}
+
+// FIB-132: remove proposal from the in-flight set (called on all verify exit paths)
+void PBFTEngine::eraseInFlightProposal(std::shared_ptr<PBFTBaseMessageInterface> const& _msg)
+{
+    RecursiveGuard lock(m_mutex);
+    m_inFlightProposals.erase(inFlightKey(_msg));
+}
+
 bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
     bool _needVerifyProposal, bool _generatedFromNewView, bool _needCheckSignature)
 {
@@ -970,6 +984,21 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
     {
         return false;
     }
+    // FIB-132: guard against re-entering verifyProposal for a proposal that is
+    // already being verified. Without this guard a Byzantine peer can flood the
+    // same PrePrepare and trigger redundant verification work for every copy.
+    {
+        RecursiveGuard lock(m_mutex);
+        auto key = inFlightKey(_prePrepareMsg);
+        if (m_inFlightProposals.count(key))
+        {
+            PBFT_LOG(DEBUG) << LOG_DESC(
+                                   "handlePrePrepareMsg: proposal already in-flight, skip verify")
+                            << printPBFTMsgInfo(_prePrepareMsg);
+            return true;
+        }
+        m_inFlightProposals.insert(key);
+    }
     m_config->validator()->verifyProposal(leaderNodeInfo->nodeID,
         _prePrepareMsg->consensusProposal()->index(), block,
         [self, _prePrepareMsg, _generatedFromNewView, leaderNodeInfo, _needCheckSignature, block](
@@ -981,6 +1010,8 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
                 {
                     return;
                 }
+                // FIB-132: always erase the in-flight entry on completion
+                pbftEngine->eraseInFlightProposal(_prePrepareMsg);
                 auto committedIndex = pbftEngine->m_config->committedProposal()->index();
                 if (committedIndex >= _prePrepareMsg->index())
                 {
@@ -1026,6 +1057,11 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
             }
             catch (std::exception const& _e)
             {
+                // FIB-132: ensure in-flight entry is removed even on exception
+                if (auto pbftEngine = self.lock())
+                {
+                    pbftEngine->eraseInFlightProposal(_prePrepareMsg);
+                }
                 PBFT_LOG(WARNING) << LOG_DESC("exception when calls onVerifyFinishedHandler")
                                   << printPBFTMsgInfo(_prePrepareMsg)
                                   << LOG_KV("message", boost::diagnostic_information(_e));

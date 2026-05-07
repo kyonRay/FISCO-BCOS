@@ -25,6 +25,7 @@
 #include <bcos-utilities/Error.h>
 #include <bcos-utilities/Timer.h>
 #include <oneapi/tbb/concurrent_queue.h>
+#include <unordered_set>
 #include <utility>
 
 namespace bcos
@@ -201,6 +202,10 @@ protected:
     virtual void onStableCheckPointCommitFailed(
         Error::Ptr&& _error, PBFTProposalInterface::Ptr _stableProposal);
 
+    // FIB-132: helpers for in-flight proposal deduplication
+    static std::string inFlightKey(std::shared_ptr<PBFTBaseMessageInterface> const& _msg);
+    void eraseInFlightProposal(std::shared_ptr<PBFTBaseMessageInterface> const& _msg);
+
 private:
     // utility functions
     void waitSignal()
@@ -239,6 +244,11 @@ protected:
 
     ledger::LedgerInterface::Ptr m_ledger;
     ledger::LedgerConfig::Ptr m_ledgerConfig;
+
+    // FIB-132: in-flight verification set keyed by "<index>:<hash>:<view>".
+    // Prevents the same PrePrepare proposal from being re-submitted to
+    // verifyProposal() while a prior verification is still pending.
+    std::unordered_set<std::string> m_inFlightProposals;
 };
 }  // namespace consensus
 }  // namespace bcos
