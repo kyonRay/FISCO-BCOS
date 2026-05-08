@@ -20,6 +20,7 @@
  */
 #include "PBFTImpl.h"
 #include <json/json.h>
+#include <boost/exception/diagnostic_information.hpp>
 using namespace bcos;
 using namespace bcos::consensus;
 
@@ -178,12 +179,42 @@ void PBFTImpl::enableAsMasterNode(bool _isMasterNode)
     // processing (they were observed under the previous role/term and must not be
     // replayed into the freshly-recovered state).
     m_pbftEngine->clearMsgQueue();
-    m_pbftEngine->pbftConfig()->enableAsMasterNode(true);
     PBFT_LOG(INFO) << LOG_DESC("enableAsMasterNode: init and start the consensus module");
-    init();
-    m_pbftEngine->recoverState();
-    m_pbftEngine->restart();
-    // only reset m_masterNode to true when init success
+    // FIB-138: do NOT flip pbftConfig->m_asMasterNode (read by isConsensusNode and used
+    // to gate consensus traffic on PBFTEngine.cpp:211/347/508/569/1141/1693/1756) until
+    // init/recoverState/restart all succeed. Flipping early opens a window where
+    // incoming PBFT messages are accepted while shared consensus state (ledger config,
+    // recovered proposals, watermarks, caches, timers) is still being mutated. On any
+    // failure both PBFTImpl::m_masterNode (PBFTImpl.h:169) and ConsensusConfig::
+    // m_asMasterNode (ConsensusConfig.h:159) must roll back so the node does not
+    // remain a half-initialized "master" still accepting traffic.
+    try
+    {
+        init();
+        m_pbftEngine->recoverState();
+        m_pbftEngine->restart();
+    }
+    catch (std::exception const& e)
+    {
+        PBFT_LOG(ERROR) << LOG_DESC(
+                               "enableAsMasterNode: promotion failed; rolling back master flags")
+                        << LOG_KV("err", boost::diagnostic_information(e));
+        // Both flags MUST stay/become false on failure.
+        m_pbftEngine->pbftConfig()->enableAsMasterNode(false);
+        m_masterNode.store(false);
+        throw;
+    }
+    catch (...)
+    {
+        PBFT_LOG(ERROR) << LOG_DESC(
+            "enableAsMasterNode: unknown failure, rolling back master flags");
+        // Both flags MUST stay/become false on failure.
+        m_pbftEngine->pbftConfig()->enableAsMasterNode(false);
+        m_masterNode.store(false);
+        throw;
+    }
+    // Init/recover/restart succeeded; now make the node visible as a master.
+    m_pbftEngine->pbftConfig()->enableAsMasterNode(true);
     m_masterNode.store(true);
 }
 

@@ -164,7 +164,21 @@ void PBFTEngine::tryToResendCheckPoint()
 void PBFTEngine::restart()
 {
     PBFT_LOG(INFO) << LOG_DESC("restart the consensus module");
-    m_config->enableAsMasterNode(true);
+    // FIB-138: only re-affirm the master flag when we are ALREADY in master state
+    // (steady-state recovery-in-place). When this restart() is invoked from
+    // PBFTImpl::enableAsMasterNode(true)'s promotion sequence, the flag is still
+    // false and PBFTImpl owns the final flip after init/recover/restart all succeed.
+    // Pre-empting the flag here would re-open the consensus-state race that FIB-138
+    // is meant to close.
+    if (m_config->asMasterNode())
+    {
+        m_config->enableAsMasterNode(true);
+    }
+    else
+    {
+        PBFT_LOG(INFO) << LOG_DESC(
+            "restart: skip master-flag flip during promotion transition (FIB-138)");
+    }
     triggerTimeout(false);
 }
 
