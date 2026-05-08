@@ -77,11 +77,10 @@ void PBFTConfig::resetConfig(LedgerConfig::Ptr _ledgerConfig, bool _syncedBlock)
     }
     if (m_compatibilityVersion != _ledgerConfig->compatibilityVersion())
     {
-        PBFT_LOG(INFO)
-            << LOG_DESC("compatibilityVersion updated")
-            << LOG_KV("version", (bcos::protocol::BlockVersion)m_compatibilityVersion)
-            << LOG_KV("updatedVersion",
-                   (bcos::protocol::BlockVersion)(_ledgerConfig->compatibilityVersion()));
+        PBFT_LOG(INFO) << LOG_DESC("compatibilityVersion updated")
+                       << LOG_KV("version", (bcos::protocol::BlockVersion)m_compatibilityVersion)
+                       << LOG_KV("updatedVersion", (bcos::protocol::BlockVersion)(
+                                                       _ledgerConfig->compatibilityVersion()));
         m_compatibilityVersion = _ledgerConfig->compatibilityVersion();
         if (m_versionNotification && m_asMasterNode)
         {
@@ -126,7 +125,7 @@ void PBFTConfig::resetConfig(LedgerConfig::Ptr _ledgerConfig, bool _syncedBlock)
     }
 
     // the node is syncing, reset the timeout state to false for view recovery
-    if (m_syncingHighestNumber > _ledgerConfig->blockNumber())
+    if (syncingHighestNumber() > _ledgerConfig->blockNumber())
     {
         m_syncingState = true;
         // notify resetSealing(the syncing node should not seal block)
