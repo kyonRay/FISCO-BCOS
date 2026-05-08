@@ -10,6 +10,7 @@ find_package(jsoncpp REQUIRED)
 add_library(transaction-executor
     bcos-transaction-executor/EVMCResult.cpp
     bcos-transaction-executor/vm/VMInstance.cpp
+    bcos-transaction-executor/vm/VMFactory.cpp
     bcos-transaction-executor/precompiled/PrecompiledManager.cpp
     bcos-transaction-executor/precompiled/PrecompiledImpl.cpp
     bcos-transaction-executor/vm/HostContext.cpp

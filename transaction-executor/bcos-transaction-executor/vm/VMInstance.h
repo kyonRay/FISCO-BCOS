@@ -52,6 +52,14 @@ public:
         evmc_revision rev, const evmc_message* msg, const uint8_t* code, size_t codeSize);
 
     void enableDebugOutput();
+
+    /// FIB-93 test-only: returns the raw pointer to the held CodeAnalysis to
+    /// enable identity comparison in cache-hit unit tests. NOT for production
+    /// callers — execution always goes through execute().
+    evmone::baseline::CodeAnalysis const* analysisRawPtr() const noexcept
+    {
+        return m_instance.get();
+    }
 };
 
 }  // namespace bcos::executor_v1

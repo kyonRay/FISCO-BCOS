@@ -25,6 +25,7 @@
 #include "../precompiled/PrecompiledImpl.h"
 #include "../precompiled/PrecompiledManager.h"
 #include "EVMHostInterface.h"
+#include "VMFactory.h"
 #include "VMInstance.h"
 #include "bcos-codec/abi/ContractABICodec.h"
 #include "bcos-crypto/interfaces/crypto/Hash.h"
@@ -81,8 +82,10 @@ evmc_message getMessage(bool web3Tx, const evmc_message& inputMessage,
 
 struct Executable
 {
-    Executable(storage::Entry code, evmc_revision revision);
-    Executable(bytesConstRef code, evmc_revision revision);
+    // FIB-93: VMFactory& threaded in for code-hash analysis caching.
+    Executable(VMFactory& vmFactory, storage::Entry code, evmc_revision revision);
+    Executable(
+        VMFactory& vmFactory, bytesConstRef code, evmc_revision revision, bool isCreate = false);
 
     std::optional<storage::Entry> m_code;
     VMInstance m_vmInstance;
@@ -98,8 +101,8 @@ using CacheExecutables =
         std::hash<evmc_address>>;
 CacheExecutables& getCacheExecutables();
 
-task::Task<std::shared_ptr<Executable>> getExecutable(
-    auto& storage, const evmc_address& address, const evmc_revision& revision, bool binaryAddress)
+task::Task<std::shared_ptr<Executable>> getExecutable(auto& storage, VMFactory& vmFactory,
+    const evmc_address& address, const evmc_revision& revision, bool binaryAddress)
 {
     if (auto executable = co_await storage2::readOne(getCacheExecutables(), address))
     {
@@ -109,7 +112,7 @@ task::Task<std::shared_ptr<Executable>> getExecutable(
     if (Account<std::decay_t<decltype(storage)>> account(storage, address, binaryAddress);
         auto codeEntry = co_await account.code())
     {
-        auto executable = std::make_shared<Executable>(std::move(*codeEntry), revision);
+        auto executable = std::make_shared<Executable>(vmFactory, std::move(*codeEntry), revision);
         co_await storage2::writeOne(getCacheExecutables(), address, executable);
         co_return executable;
     }
@@ -130,6 +133,10 @@ private:
     std::reference_wrapper<const PrecompiledManager> m_precompiledManager;
     std::reference_wrapper<const ledger::LedgerConfig> m_ledgerConfig;
     std::reference_wrapper<const crypto::Hash> m_hashImpl;
+    // FIB-93: long-lived VMFactory owned by TransactionExecutorImpl, threaded
+    // through HostContext to avoid per-call instantiation. Cache entries persist
+    // across HostContexts so identical bytecode reuses analysis.
+    std::reference_wrapper<VMFactory> m_vmFactory;
     evmc_message m_message;
     Account<Storage> m_recipientAccount;
 
@@ -186,7 +193,7 @@ private:
         const protocol::BlockHeader& blockHeader, const evmc_message& message,
         const evmc_address& origin, std::string_view abi, int contextID, int64_t& seq,
         PrecompiledManager const& precompiledManager, ledger::LedgerConfig const& ledgerConfig,
-        crypto::Hash const& hashImpl, bool web3Tx, const u256& nonce,
+        crypto::Hash const& hashImpl, VMFactory& vmFactory, bool web3Tx, const u256& nonce,
         const evmc_host_interface* hostInterface)
       : evmc_host_context{.interface = hostInterface,
             .wasm_interface = nullptr,
@@ -204,6 +211,7 @@ private:
         m_precompiledManager(precompiledManager),
         m_ledgerConfig(ledgerConfig),
         m_hashImpl(hashImpl),
+        m_vmFactory(vmFactory),
         m_message(getMessage(
             web3Tx, message, m_blockHeader.get().number(), m_contextID, m_seq, nonce, m_hashImpl)),
         m_recipientAccount(getAccount(*this, this->message().recipient)),
@@ -217,9 +225,10 @@ public:
         protocol::BlockHeader const& blockHeader, const evmc_message& message,
         const evmc_address& origin, std::string_view abi, int contextID, int64_t& seq,
         PrecompiledManager const& precompiledManager, ledger::LedgerConfig const& ledgerConfig,
-        crypto::Hash const& hashImpl, bool web3Tx, const u256& nonce, auto&& waitOperator)
+        crypto::Hash const& hashImpl, VMFactory& vmFactory, bool web3Tx, const u256& nonce,
+        auto&& waitOperator)
       : HostContext(innerConstructor, storage, transientStorage, blockHeader, message, origin, abi,
-            contextID, seq, precompiledManager, ledgerConfig, hashImpl, web3Tx, nonce,
+            contextID, seq, precompiledManager, ledgerConfig, hashImpl, vmFactory, web3Tx, nonce,
             getHostInterface<HostContext>(std::forward<decltype(waitOperator)>(waitOperator)))
     {}
 
@@ -291,8 +300,8 @@ public:
     task::Task<std::optional<storage::Entry>> code(
         const evmc_address& address, auto&&... /*unused*/)
     {
-        if (auto executable = co_await getExecutable(m_rollbackableStorage.get(), address,
-                m_revision,
+        if (auto executable = co_await getExecutable(m_rollbackableStorage.get(), m_vmFactory.get(),
+                address, m_revision,
                 m_ledgerConfig.get().features().get(ledger::Features::Flag::feature_raw_address));
             executable && executable->m_code)
         {
@@ -530,8 +539,8 @@ public:
         auto nonce = u256(nonceStr.value_or(std::string("0")));
         HostContext hostcontext(innerConstructor, m_rollbackableStorage.get(),
             m_rollbackableTransientStorage.get(), m_blockHeader, message, m_origin, {}, m_contextID,
-            m_seq, m_precompiledManager.get(), m_ledgerConfig, m_hashImpl, m_web3Tx, nonce,
-            interface);
+            m_seq, m_precompiledManager.get(), m_ledgerConfig, m_hashImpl, m_vmFactory.get(),
+            m_web3Tx, nonce, interface);
 
         co_await hostcontext.prepare();
         auto result = co_await hostcontext.execute();
@@ -551,7 +560,9 @@ private:
     {
         auto& ref = message();
         bytesConstRef createCode(ref.input_data, ref.input_size);
-        m_executable = std::make_shared<Executable>(createCode, m_revision);
+        // FIB-93: isCreate=true bypasses the code-hash cache (mirrors non-v1).
+        m_executable = std::make_shared<Executable>(
+            m_vmFactory.get(), createCode, m_revision, /*isCreate=*/true);
     }
 
     task::Task<EVMCResult> executeCreate()
@@ -705,8 +716,8 @@ private:
                 m_ledgerConfig.get().authCheckStatus(), m_ledgerConfig.get().features());
         }
 
-        if (m_executable = co_await getExecutable(m_rollbackableStorage.get(), ref.code_address,
-                m_revision,
+        if (m_executable = co_await getExecutable(m_rollbackableStorage.get(), m_vmFactory.get(),
+                ref.code_address, m_revision,
                 m_ledgerConfig.get().features().get(ledger::Features::Flag::feature_raw_address));
             !m_executable)
         {

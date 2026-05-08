@@ -21,15 +21,23 @@
 
 #pragma once
 #include "VMInstance.h"
+#include "bcos-crypto/interfaces/crypto/CommonType.h"
 #include "bcos-utilities/BoostLog.h"
 #include "bcos-utilities/Error.h"
 #include "bcos-utilities/Exceptions.h"
+#include <evmc/evmc.h>
 #include <evmone/evmone.h>
+#include <boost/compute/detail/lru_cache.hpp>
 #include <boost/throw_exception.hpp>
+#include <evmone/baseline.hpp>
 #include <memory>
+#include <mutex>
 
 namespace bcos::executor_v1
 {
+
+constexpr std::size_t c_EVMONE_CACHE_SIZE = 1024;
+
 enum class VMKind
 {
     evmone,
@@ -37,31 +45,34 @@ enum class VMKind
 
 DERIVE_BCOS_EXCEPTION(UnknownVMError);
 
+/// FIB-93: stateful VM factory holding a single-revision LRU cache of
+/// evmone CodeAnalysis keyed by code hash. Mirrors the strategy of the non-v1
+/// executor in bcos-executor/src/vm/VMFactory: cache entries belong to ONE
+/// EVMC revision; inserting with a different revision clears the cache.
+/// Sits BENEATH HostContext's address-keyed Executable cache: identical
+/// bytecode at distinct addresses (clones / proxies / redeployments) reuses
+/// the same CodeAnalysis instead of re-running evmone::baseline::analyze.
 class VMFactory
 {
 public:
-    static VMInstance create(VMKind kind, bytesConstRef code, evmc_revision mode)
-    {
-        switch (kind)
-        {
-        case VMKind::evmone:
-        {
-            // FIB-95: wrap analyze() in try/catch to prevent unhandled exceptions
-            try
-            {
-                return VMInstance{
-                    std::make_shared<evmone::baseline::CodeAnalysis>(evmone::baseline::analyze(
-                        mode, evmone::bytes_view((const uint8_t*)code.data(), code.size())))};
-            }
-            catch (const std::exception& e)
-            {
-                BCOS_LOG(ERROR) << LOG_BADGE("VM") << "Failed to analyze bytecode: " << e.what();
-                BOOST_THROW_EXCEPTION(UnknownVMError{});
-            }
-        }
-        default:
-            BOOST_THROW_EXCEPTION(UnknownVMError{});
-        }
-    }
+    explicit VMFactory(std::size_t cacheSize = c_EVMONE_CACHE_SIZE);
+
+    /// Returns a VMInstance wrapping a (possibly cached) CodeAnalysis.
+    /// isCreate=true bypasses the cache (mirrors non-v1 VMFactory.cpp:60).
+    VMInstance create(VMKind kind, bytesConstRef code, evmc_revision mode, bool isCreate = false);
+
+    /// Test-only accessor for the current cache occupancy. NOT for production.
+    std::size_t testOnlyCacheSize() const noexcept;
+
+private:
+    std::shared_ptr<evmone::baseline::CodeAnalysis const> getOrCompute(
+        const bcos::crypto::HashType& key, evmc_revision revision, bytesConstRef code);
+
+    boost::compute::detail::lru_cache<bcos::crypto::HashType,
+        std::shared_ptr<evmone::baseline::CodeAnalysis const>>
+        m_cache;
+    evmc_revision m_revision = EVMC_PARIS;
+    mutable std::mutex m_cacheMutex;
 };
+
 }  // namespace bcos::executor_v1

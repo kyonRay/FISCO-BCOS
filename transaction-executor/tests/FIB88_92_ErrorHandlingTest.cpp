@@ -59,6 +59,8 @@ public:
     std::optional<PrecompiledManager> precompiledManager;
     bcos::ledger::LedgerConfig ledgerConfig;
     bcostars::protocol::BlockHeaderImpl blockHeader;
+    // FIB-93: long-lived VMFactory shared across HostContexts in this fixture.
+    bcos::executor_v1::VMFactory vmFactory;
 
     FIB88_92_Fixture()
       : rollbackableStorage(storage), rollbackableTransientStorage(transientStorage)
@@ -97,8 +99,8 @@ public:
 
         HostContext<decltype(rollbackableStorage), decltype(rollbackableTransientStorage)>
             hostContext(rollbackableStorage, rollbackableTransientStorage, blockHeader, message,
-                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, false, 0,
-                bcos::task::syncWait);
+                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, vmFactory, false,
+                0, bcos::task::syncWait);
         syncWait(hostContext.prepare());
         auto result = syncWait(hostContext.execute());
         BOOST_REQUIRE_EQUAL(result.status_code, 0);
@@ -150,8 +152,8 @@ BOOST_AUTO_TEST_CASE(FIB88_InsufficientBalanceConsumesAllGas)
 
         HostContext<decltype(rollbackableStorage), decltype(rollbackableTransientStorage)>
             hostContext(rollbackableStorage, rollbackableTransientStorage, blockHeader, message,
-                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, false, 0,
-                bcos::task::syncWait);
+                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, vmFactory, false,
+                0, bcos::task::syncWait);
         co_await hostContext.prepare();
         auto result = co_await hostContext.execute();
 
@@ -195,8 +197,8 @@ BOOST_AUTO_TEST_CASE(FIB88_NotFoundCodeRevertPreservesGas)
 
         HostContext<decltype(rollbackableStorage), decltype(rollbackableTransientStorage)>
             hostContext(rollbackableStorage, rollbackableTransientStorage, blockHeader, message,
-                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, false, 0,
-                bcos::task::syncWait);
+                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, vmFactory, false,
+                0, bcos::task::syncWait);
         co_await hostContext.prepare();
         auto result = co_await hostContext.execute();
 
@@ -237,8 +239,8 @@ BOOST_AUTO_TEST_CASE(FIB88_NotFoundCodeStaticCallReturnsSuccess)
 
         HostContext<decltype(rollbackableStorage), decltype(rollbackableTransientStorage)>
             hostContext(rollbackableStorage, rollbackableTransientStorage, blockHeader, message,
-                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, false, 0,
-                bcos::task::syncWait);
+                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, vmFactory, false,
+                0, bcos::task::syncWait);
         co_await hostContext.prepare();
         auto result = co_await hostContext.execute();
 
@@ -304,8 +306,8 @@ BOOST_AUTO_TEST_CASE(FIB91_AuthCheckInsideTryBlock)
 
         HostContext<decltype(rollbackableStorage), decltype(rollbackableTransientStorage)>
             hostContext(rollbackableStorage, rollbackableTransientStorage, blockHeader, message,
-                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, false, 0,
-                bcos::task::syncWait);
+                origin, "", 0, seq, *precompiledManager, ledgerConfig, *hashImpl, vmFactory, false,
+                0, bcos::task::syncWait);
         co_await hostContext.prepare();
 
         // FIB-91: execute() must not throw even when auth checking is enabled.
@@ -398,7 +400,7 @@ BOOST_AUTO_TEST_CASE(FIB88_FlagOff_InsufficientBalancePreservesGas)
 
         HostContext<decltype(rollbackableStorage), decltype(rollbackableTransientStorage)>
             hostContext(rollbackableStorage, rollbackableTransientStorage, oldHeader, message,
-                origin, "", 0, seq, *precompiledManager, oldConfig, *hashImpl, false, 0,
+                origin, "", 0, seq, *precompiledManager, oldConfig, *hashImpl, vmFactory, false, 0,
                 bcos::task::syncWait);
         co_await hostContext.prepare();
         auto result = co_await hostContext.execute();

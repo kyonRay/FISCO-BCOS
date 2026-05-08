@@ -10,6 +10,7 @@
 #include "bcos-utilities/Exceptions.h"
 #include "precompiled/PrecompiledManager.h"
 #include "vm/HostContext.h"
+#include "vm/VMFactory.h"
 #include <evmc/evmc.h>
 #include <boost/algorithm/hex.hpp>
 #include <boost/exception/diagnostic_information.hpp>
@@ -37,6 +38,15 @@ public:
     crypto::Hash::Ptr m_hashImpl;
     std::reference_wrapper<PrecompiledManager> m_precompiledManager;
 
+private:
+    // FIB-93: long-lived VMFactory shared across all transactions executed by
+    // this executor. Caches evmone::baseline::CodeAnalysis keyed by code hash
+    // so that identical bytecode at different addresses (clones, proxies,
+    // redeployments) reuses analysis instead of running evmone::baseline::analyze
+    // per address.
+    VMFactory m_vmFactory{c_EVMONE_CACHE_SIZE};
+
+public:
     using TransientStorage =
         bcos::storage2::memory_storage::MemoryStorage<bcos::executor_v1::StateKey,
             bcos::executor_v1::StateValue, bcos::storage2::memory_storage::ORDERED>;
@@ -89,8 +99,8 @@ public:
                 m_hostContext(m_rollbackableStorage, m_rollbackableTransientStorage, blockHeader,
                     newEVMCMessage(m_blockHeader.get().number(), transaction, m_gasLimit, m_origin),
                     m_origin, transaction.abi(), contextID, m_seq, executor.m_precompiledManager,
-                    ledgerConfig, *executor.m_hashImpl, transaction.type() != 0, m_nonce,
-                    task::syncWait)
+                    ledgerConfig, *executor.m_hashImpl, executor.m_vmFactory,
+                    transaction.type() != 0, m_nonce, task::syncWait)
             {}
         };
         std::unique_ptr<Data> m_data;
