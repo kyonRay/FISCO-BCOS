@@ -35,34 +35,52 @@
 namespace bcos::sealer
 {
 
+sealer::VrfCurveType VRFBasedSealer::getVrfCurveType(ledger::Features const& features)
+{
+    // FIB-160: pure-function curve selection from a caller-owned Features
+    // snapshot. The caller is responsible for snapshot consistency.
+    if (features.get(ledger::Features::Flag::feature_rpbft_vrf_type_secp256k1))
+    {
+        return sealer::VrfCurveType::SECKP256K1;
+    }
+    return sealer::VrfCurveType::CURVE25519;
+}
+
 sealer::VrfCurveType VRFBasedSealer::getVrfCurveType(SealerConfig::Ptr const& _sealerConfig)
 {
-    sealer::VrfCurveType vrfCurveType = sealer::VrfCurveType::CURVE25519;
-    if (_sealerConfig->consensus()->consensusConfig()->features().get(
-            ledger::Features::Flag::feature_rpbft_vrf_type_secp256k1))
-    {
-        vrfCurveType = sealer::VrfCurveType::SECKP256K1;
-    }
-    return vrfCurveType;
+    // Legacy entry point. features() now takes a shared_lock (FIB-160), so the
+    // single read is internally safe; cross-read consistency with other flags
+    // requires the snapshot path.
+    return getVrfCurveType(_sealerConfig->consensus()->consensusConfig()->features());
 }
 
 uint16_t VRFBasedSealer::hookWhenSealBlock(bcos::protocol::Block::Ptr _block)
 {
-    const auto& consensusConfig = dynamic_cast<consensus::ConsensusConfig const&>(
+    // FIB-160: take ONE atomic rotation snapshot (rotate decision + features)
+    // at the start of the rotating-tx generation pass. All downstream reads
+    // (curve choice, blockNumberInput flag) use this snapshot so a concurrent
+    // setFeatures cannot make the rotate decision and the VRF mode disagree.
+    auto const& consensusConfig = dynamic_cast<consensus::ConsensusConfig const&>(
         *m_sealerConfig->consensus()->consensusConfig());
-    if (!consensusConfig.shouldRotateSealers(
-            _block == nullptr ? -1 : _block->blockHeader()->number()))
+    auto snap = consensusConfig.getRotationSnapshot(
+        _block == nullptr ? -1 : _block->blockHeader()->number());
+    if (!snap.shouldRotateSealers)
     {
         return SealBlockResult::SUCCESS;
     }
-    return generateTransactionForRotating(_block, m_sealerConfig, m_sealingManager, m_hashImpl,
-        consensusConfig.features().get(ledger::Features::Flag::bugfix_rpbft_vrf_blocknumber_input));
+    return generateTransactionForRotating(
+        _block, m_sealerConfig, m_sealingManager, m_hashImpl, snap.features);
 }
 
 uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::Ptr& _block,
     SealerConfig::Ptr const& _sealerConfig, SealingManager::ConstPtr const& _sealingManager,
-    crypto::Hash::Ptr const& _hashImpl, bool blockNumberInput)
+    crypto::Hash::Ptr const& _hashImpl, ledger::Features const& features)
 {
+    // FIB-160 snapshot-aware path: caller has already taken a single
+    // RotationSnapshot; we derive curve choice and blockNumberInput flag from
+    // that same snapshot so they cannot disagree under concurrent setFeatures.
+    bool blockNumberInput =
+        features.get(ledger::Features::Flag::bugfix_rpbft_vrf_blocknumber_input);
     try
     {
         auto blockNumber = _block->blockHeader()->number();
@@ -81,7 +99,9 @@ uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::P
             keyPair->secretKey()->size()};
         bytes vrfPublicKey;
         bcos::bytes vrfProof;
-        sealer::VrfCurveType vrfCurveType = getVrfCurveType(_sealerConfig);
+        // FIB-160: curve choice from the same Features snapshot as blockNumberInput
+        // above, so a concurrent setFeatures cannot make the two flags disagree.
+        sealer::VrfCurveType vrfCurveType = getVrfCurveType(features);
         int8_t vrfProve = 0;
         int8_t pubkeyDerive = 0;
         auto blockHash = _sealingManager->latestHash();
@@ -186,5 +206,29 @@ uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::P
         return SealBlockResult::FAILED;
     }
     return SealBlockResult::SUCCESS;
+}
+
+uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::Ptr& _block,
+    SealerConfig::Ptr const& _sealerConfig, SealingManager::ConstPtr const& _sealingManager,
+    crypto::Hash::Ptr const& _hashImpl, bool blockNumberInput)
+{
+    // FIB-160 legacy entry point. Builds a Features view that carries the
+    // explicit blockNumberInput choice the caller passed PLUS a fresh
+    // (now-locked) read of feature_rpbft_vrf_type_secp256k1, then delegates
+    // to the snapshot-aware overload. The two reads are not
+    // snapshot-consistent with each other; new call sites should prefer the
+    // RotationSnapshot-aware path via hookWhenSealBlock for full consistency.
+    ledger::Features features;
+    if (_sealerConfig->consensus()->consensusConfig()->features().get(
+            ledger::Features::Flag::feature_rpbft_vrf_type_secp256k1))
+    {
+        features.set(ledger::Features::Flag::feature_rpbft_vrf_type_secp256k1);
+    }
+    if (blockNumberInput)
+    {
+        features.set(ledger::Features::Flag::bugfix_rpbft_vrf_blocknumber_input);
+    }
+    return generateTransactionForRotating(
+        _block, _sealerConfig, _sealingManager, _hashImpl, features);
 }
 }  // namespace bcos::sealer

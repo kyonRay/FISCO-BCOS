@@ -148,9 +148,29 @@ ConsensusNode* ConsensusConfig::getConsensusNodeByIndex(IndexType _nodeIndex)
 }
 bcos::ledger::Features bcos::consensus::ConsensusConfig::features() const
 {
+    // FIB-160: shared_lock so concurrent setFeatures cannot tear the bitset.
+    std::shared_lock lock(x_features);
     return m_features;
 }
 void bcos::consensus::ConsensusConfig::setFeatures(ledger::Features features)
 {
+    // FIB-160: unique_lock so a concurrent reader sees either the old or the
+    // new bitset in full, never a mid-write tear.
+    std::unique_lock lock(x_features);
     m_features = features;
+}
+
+bcos::consensus::ConsensusConfig::RotationSnapshot
+bcos::consensus::ConsensusConfig::getRotationSnapshot(protocol::BlockNumber blockNumber) const
+{
+    // FIB-160: take ONE shared_lock for both the rotate decision and the
+    // features copy, so consumers (VRFBasedSealer reads up to three flags
+    // plus the rotate decision) see a consistent view. The override of
+    // shouldRotateSealers in RPBFTConfigTools (RPBFTConfigTools.cpp:168) reads
+    // independent atomic state and does NOT take this lock recursively.
+    std::shared_lock lock(x_features);
+    RotationSnapshot snap;
+    snap.features = m_features;
+    snap.shouldRotateSealers = shouldRotateSealers(blockNumber);
+    return snap;
 }

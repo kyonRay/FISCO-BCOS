@@ -24,6 +24,7 @@
 #include "bcos-framework/protocol/Protocol.h"
 #include <bcos-crypto/interfaces/crypto/KeyPairInterface.h>
 #include <bcos-utilities/Common.h>
+#include <shared_mutex>
 
 namespace bcos::consensus
 {
@@ -135,6 +136,18 @@ public:
     ledger::Features features() const override;
     void setFeatures(ledger::Features features) override;
 
+    // FIB-160: atomic snapshot of (rotate decision + features) for consumers
+    // (notably VRFBasedSealer) that must read multiple feature flags AND the
+    // rotate decision under a single consistent view. Reads m_features and
+    // calls the virtual shouldRotateSealers under one shared_lock so the
+    // snapshot does not interleave with a concurrent setFeatures.
+    struct RotationSnapshot
+    {
+        bool shouldRotateSealers;
+        ledger::Features features;
+    };
+    virtual RotationSnapshot getRotationSnapshot(protocol::BlockNumber blockNumber) const;
+
     void setSinglePointConsensus(bool singlePointConsensus)
     {
         m_singlePointConsensus = singlePointConsensus;
@@ -171,6 +184,11 @@ protected:
     std::atomic<bcos::protocol::BlockNumber> m_progressedIndex = {0};
     bcos::protocol::BlockNumber m_syncingHighestNumber = {0};
     std::function<void(uint32_t _version)> m_versionNotification;
+
+    // FIB-160: protect m_features against concurrent reads from VRFBasedSealer
+    // and writes from PBFTConfig::resetConfig (PBFTConfig.cpp:64). RotationSnapshot
+    // and features() take shared_lock; setFeatures takes unique_lock.
+    mutable std::shared_mutex x_features;
     ledger::Features m_features;
     bool m_singlePointConsensus = false;
 };
