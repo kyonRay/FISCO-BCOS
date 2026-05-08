@@ -159,25 +159,32 @@ void PBFTImpl::enableAsMasterNode(bool _isMasterNode)
                        << LOG_KV("master", _isMasterNode);
         return;
     }
-    if (!m_masterNode)
+    PBFT_LOG(INFO) << LOG_DESC("enableAsMasterNode: ") << _isMasterNode;
+    if (!_isMasterNode)
     {
+        // Demotion path: master -> backup
+        // FIB-137: drain m_msgQueue in addition to clearAllCache(); both are needed to
+        // discard pre-demotion PBFT traffic so it is not replayed after a later promote.
         PBFT_LOG(INFO) << LOG_DESC(
             "enableAsMasterNode: clearAllCache for the node switch into backup node");
         m_pbftEngine->clearAllCache();
-    }
-    PBFT_LOG(INFO) << LOG_DESC("enableAsMasterNode: ") << _isMasterNode;
-    m_pbftEngine->pbftConfig()->enableAsMasterNode(_isMasterNode);
-    if (!_isMasterNode)
-    {
-        m_masterNode.store(_isMasterNode);
+        m_pbftEngine->clearMsgQueue();
+        m_pbftEngine->pbftConfig()->enableAsMasterNode(false);
+        m_masterNode.store(false);
         return;
     }
+    // Promotion path: backup -> master
+    // FIB-137: discard messages accumulated during the demoted period before resuming
+    // processing (they were observed under the previous role/term and must not be
+    // replayed into the freshly-recovered state).
+    m_pbftEngine->clearMsgQueue();
+    m_pbftEngine->pbftConfig()->enableAsMasterNode(true);
     PBFT_LOG(INFO) << LOG_DESC("enableAsMasterNode: init and start the consensus module");
     init();
     m_pbftEngine->recoverState();
     m_pbftEngine->restart();
     // only reset m_masterNode to true when init success
-    m_masterNode.store(_isMasterNode);
+    m_masterNode.store(true);
 }
 
 void bcos::consensus::PBFTImpl::setLedger(ledger::LedgerInterface::Ptr ledger)
