@@ -102,7 +102,14 @@ uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::P
 
             vrfProof.resize(curve25519VRFProofSize);
             COutputBuffer proof{(char*)vrfProof.data(), curve25519VRFProofSize};
-            auto vrfProve = wedpr_curve25519_vrf_prove_utf8(&privateKey, &inputMsg, &proof);
+            // FIB-147: do NOT redeclare 'vrfProve' here. The previous code used
+            // 'auto vrfProve = ...' which shadowed the outer-scope int8_t vrfProve
+            // (declared at function scope, initialized to 0). The error check below
+            // (vrfProve != WEDPR_SUCCESS) tested the outer's initial 0 (treated as
+            // success), so a failed curve25519 VRF proof was silently accepted and
+            // the sealer continued with an invalid/empty proof. Assign to the outer
+            // variable so the subsequent check sees the actual call result.
+            vrfProve = wedpr_curve25519_vrf_prove_utf8(&privateKey, &inputMsg, &proof);
         }
         else if (vrfCurveType == sealer::VrfCurveType::SECKP256K1)
         {
@@ -127,7 +134,7 @@ uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::P
         std::string interface = precompiled::WSM_METHOD_ROTATE_STR;
 
         auto random = std::random_device{};
-    bcos::CodecWrapper codec(_hashImpl, bcos::protocol::g_BCOSConfig.isWasm());
+        bcos::CodecWrapper codec(_hashImpl, bcos::protocol::g_BCOSConfig.isWasm());
         auto input = codec.encodeWithSig(interface, vrfPublicKey,
             blockNumberInput ? bytes((const byte*)std::addressof(blockNumberBigEndian),
                                    (const byte*)std::addressof(blockNumberBigEndian) +
@@ -137,7 +144,7 @@ uint16_t VRFBasedSealer::generateTransactionForRotating(bcos::protocol::Block::P
 
         auto tx = _sealerConfig->blockFactory()->transactionFactory()->createTransaction(0,
             std::string(bcos::protocol::g_BCOSConfig.isWasm() ? precompiled::CONSENSUS_TABLE_NAME :
-                                                precompiled::CONSENSUS_ADDRESS),
+                                                                precompiled::CONSENSUS_ADDRESS),
             input, std::to_string(utcSteadyTimeUs() * random()),
             _sealingManager->latestNumber() + txpool::DEFAULT_BLOCK_LIMIT, _sealerConfig->chainId(),
             _sealerConfig->groupId(), utcTime(), keyPair);
