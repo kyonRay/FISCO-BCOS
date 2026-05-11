@@ -104,7 +104,7 @@ void bcostars::GatewayServiceClient::asyncGetPeers(std::function<void(
 
         void callback_asyncGetPeers(const bcostars::Error& ret,
             const bcostars::GatewayInfo& _localInfo,
-            const vector<bcostars::GatewayInfo>& _peers) override
+            const std::vector<bcostars::GatewayInfo>& _peers) override
         {
             s_tarsTimeoutCount.store(0);
             auto localGatewayInfo = fromTarsGatewayInfo(_localInfo);
@@ -283,7 +283,7 @@ void bcostars::GatewayServiceClient::asyncSendMessageByTopic(const std::string& 
           : m_callback(callback)
         {}
         void callback_asyncSendMessageByTopic(const bcostars::Error& ret, tars::Int32 _type,
-            const vector<tars::Char>& _responseData) override
+            const std::vector<tars::Char>& _responseData) override
         {
             s_tarsTimeoutCount.store(0);
             auto data = bcos::bytesConstRef(
@@ -293,7 +293,7 @@ void bcostars::GatewayServiceClient::asyncSendMessageByTopic(const std::string& 
         void callback_asyncSendMessageByTopic_exception(tars::Int32 ret) override
         {
             s_tarsTimeoutCount++;
-            return m_callback(toBcosError(ret), 0, {});
+            m_callback(toBcosError(ret), 0, {});
         }
 
     private:
@@ -313,7 +313,7 @@ void bcostars::GatewayServiceClient::asyncSendMessageByTopic(const std::string& 
     {
         return;
     }
-    vector<tars::Char> tarsRequestData(_data.begin(), _data.end());
+    std::vector<tars::Char> tarsRequestData(_data.begin(), _data.end());
     m_prx->tars_set_timeout(c_amopTimeout)
         ->async_asyncSendMessageByTopic(new Callback(_respFunc), _topic, tarsRequestData);
 }
@@ -327,7 +327,7 @@ void bcostars::GatewayServiceClient::asyncSendBroadcastMessageByTopic(
     {
         return;
     }
-    vector<tars::Char> tarsRequestData(_data.begin(), _data.end());
+    std::vector<tars::Char> tarsRequestData(_data.begin(), _data.end());
     m_prx->async_asyncSendBroadcastMessageByTopic(nullptr, _topic, tarsRequestData);
 }
 void bcostars::GatewayServiceClient::asyncSubscribeTopic(std::string const& _clientID,
