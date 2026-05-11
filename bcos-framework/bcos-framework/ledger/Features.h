@@ -9,11 +9,13 @@
 #include <array>
 #include <bitset>
 #include <magic_enum/magic_enum.hpp>
+#include <ostream>
 #include <range/v3/view/filter.hpp>
 #include <range/v3/view/iota.hpp>
 #include <range/v3/view/transform.hpp>
 #include <range/v3/view/zip.hpp>
 #include <set>
+#include <string_view>
 namespace bcos::ledger
 {
 DERIVE_BCOS_EXCEPTION(NoSuchFeatureError);
@@ -63,8 +65,14 @@ public:
         bugfix_auth_table_squatting,
         bugfix_v1_executive_wrapper,
         bugfix_v1_exec_error_gas_used,
-        bugfix_v1_precompiled_error_gas,  // FIB-76/79/80: precompiled gas overflow check,
-                                          // exception safety, and use remaining gas on revert
+        bugfix_v1_precompiled_error_gas,      // FIB-76/79/80: precompiled gas overflow check,
+                                              // exception safety, and use remaining gas on revert
+        bugfix_gas_payment_balance_precheck,  // FIB-75
+        bugfix_clamp_gas_left_on_error,       // FIB-78
+        bugfix_precompiled_feature_gate,      // FIB-84
+        bugfix_v1_executive_wrapper,          // FIB-85/86/87
+        bugfix_evm_storage_status,            // FIB-94
+        bugfix_statestorage_hash_v3_17,       // FIB-99/105
         feature_dmc2serial,
         feature_sharding,
         feature_rpbft,
@@ -129,80 +137,16 @@ public:
                });
     }
 
+    // Storage I/O member templates. Definitions live in FeaturesStorage.h,
+    // which is included at the end of this header so existing call sites
+    // (e.g. features.readFromStorage(storage, n)) keep working unchanged.
     task::Task<void> readFromStorage(
-        storage2::ReadableStorage<executor_v1::StateKeyView> auto& storage, long blockNumber)
-    {
-        for (auto key : bcos::ledger::Features::featureKeys())
-        {
-            auto entry = co_await storage2::readOne(
-                storage, executor_v1::StateKeyView(ledger::SYS_CONFIG, key));
-            if (entry)
-            {
-                auto [value, enableNumber] = entry->template getObject<ledger::SystemConfigEntry>();
-                if (blockNumber >= enableNumber)
-                {
-                    set(key);
-                }
-            }
-        }
-    }
+        storage2::ReadableStorage<executor_v1::StateKeyView> auto& storage, long blockNumber);
 
     task::Task<void> writeToStorage(
         storage2::WritableStorage<executor_v1::StateKey, executor_v1::StateValue> auto& storage,
-        long blockNumber, bool ignoreDuplicate = true) const
-    {
-        for (auto [flag, name, value] : flags())
-        {
-            if (value &&
-                !(ignoreDuplicate && co_await storage2::existsOne(storage,
-                                         executor_v1::StateKeyView(ledger::SYS_CONFIG, name))))
-            {
-                storage::Entry entry;
-                entry.setObject(
-                    SystemConfigEntry{boost::lexical_cast<std::string>((int)value), blockNumber});
-                co_await storage2::writeOne(
-                    storage, executor_v1::StateKey(ledger::SYS_CONFIG, name), std::move(entry));
-            }
-        }
-    }
+        long blockNumber, bool ignoreDuplicate = true) const;
 };
-
-inline task::Task<void> readFromStorage(Features& features,
-    storage2::ReadableStorage<executor_v1::StateKey> auto& storage, long blockNumber)
-{
-    decltype(auto) keys = bcos::ledger::Features::featureKeys();
-    auto entries = co_await storage2::readSome(std::forward<decltype(storage)>(storage),
-        keys | ::ranges::views::transform([](std::string_view key) {
-            return executor_v1::StateKeyView(ledger::SYS_CONFIG, key);
-        }));
-    for (auto&& [key, entry] : ::ranges::views::zip(keys, entries))
-    {
-        if (entry)
-        {
-            auto [value, enableNumber] = entry->template getObject<ledger::SystemConfigEntry>();
-            if (blockNumber >= enableNumber)
-            {
-                features.set(key);
-            }
-        }
-    }
-}
-
-inline task::Task<void> writeToStorage(Features const& features,
-    storage2::WritableStorage<executor_v1::StateKey, executor_v1::StateValue> auto& storage,
-    long blockNumber)
-{
-    decltype(auto) flags =
-        features.flags() | ::ranges::views::filter([](auto&& tuple) { return std::get<2>(tuple); });
-    co_await storage2::writeSome(std::forward<decltype(storage)>(storage),
-        ::ranges::views::transform(flags, [&](auto&& tuple) {
-            storage::Entry entry;
-            entry.setObject(SystemConfigEntry{
-                boost::lexical_cast<std::string>((int)std::get<2>(tuple)), blockNumber});
-            return std::make_tuple(
-                executor_v1::StateKey(ledger::SYS_CONFIG, std::get<1>(tuple)), std::move(entry));
-        }));
-}
 
 std::ostream& operator<<(std::ostream& stream, Features::Flag flag);
 
