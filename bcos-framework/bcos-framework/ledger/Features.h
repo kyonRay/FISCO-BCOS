@@ -61,6 +61,7 @@ public:
         bugfix_auth_check_revert_status,
         bugfix_auth_table_raw_address,
         bugfix_auth_table_squatting,
+        bugfix_v1_executive_wrapper,
         bugfix_v1_exec_error_gas_used,
         bugfix_v1_precompiled_error_gas,  // FIB-76/79/80: precompiled gas overflow check,
                                           // exception safety, and use remaining gas on revert

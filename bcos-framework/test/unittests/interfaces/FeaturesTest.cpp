@@ -182,6 +182,7 @@ BOOST_AUTO_TEST_CASE(feature)
         "bugfix_auth_check_revert_status",
         "bugfix_auth_table_raw_address",
         "bugfix_auth_table_squatting",
+        "bugfix_v1_executive_wrapper",
         "bugfix_v1_exec_error_gas_used",
         "bugfix_v1_precompiled_error_gas",
         "feature_dmc2serial",
