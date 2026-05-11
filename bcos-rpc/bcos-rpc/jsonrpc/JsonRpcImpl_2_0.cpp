@@ -78,7 +78,7 @@ void JsonRpcImpl_2_0::handleRpcRequest(
     std::shared_ptr<boostssl::MessageFace> _msg, std::shared_ptr<boostssl::ws::WsSession> _session)
 {
     auto buffer = _msg->payload();
-    auto req = std::string_view((const char*)buffer->data(), buffer->size());
+    auto req = std::string_view((const char*)buffer.data(), buffer.size());
 
     auto start = std::chrono::high_resolution_clock::now();
     auto seq = _msg->seq();
@@ -105,10 +105,8 @@ void JsonRpcImpl_2_0::handleRpcRequest(
         if (session->isConnected())
         {
             // TODO: no need to copy resp
-            auto buffer = std::make_shared<bcos::bytes>(std::move(resp));
-
             auto msg = messageFactory->buildMessage();
-            msg->setPayload(buffer);
+            msg->setPayload(std::move(resp));
             msg->setVersion(version);
             msg->setSeq(seq);
             msg->setExt(ext);
