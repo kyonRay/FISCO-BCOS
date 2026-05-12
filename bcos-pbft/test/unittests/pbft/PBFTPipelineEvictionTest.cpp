@@ -154,6 +154,33 @@ BOOST_AUTO_TEST_CASE(peer_cache_no_eviction_under_default_cap)
     }
 }
 
+// (d) reset() clears Stage 2 LRU caches AND Stage 3 counters.
+BOOST_AUTO_TEST_CASE(reset_clears_all_pipeline_state)
+{
+    PBFTPipeline::Config cfg;
+    cfg.maxPeers = 100;
+    cfg.lruCapacity = 8;
+    cfg.perPeerCapacity = 1000;
+    PBFTPipeline pipeline(cfg);
+
+    auto pA = peer("RA");
+    auto pB = peer("RB");
+
+    // Seed cache for A and B
+    BOOST_CHECK(pipeline.admit(mkMsg(10, pA, 0x01), 0));
+    BOOST_CHECK(pipeline.admit(mkMsg(10, pB, 0x02), 0));
+    // Confirm dedup works before reset
+    BOOST_CHECK(!pipeline.admit(mkMsg(10, pA, 0x01), 0));
+
+    // reset() — all dedup state must be cleared
+    pipeline.reset();
+
+    BOOST_CHECK_MESSAGE(
+        pipeline.admit(mkMsg(10, pA, 0x01), 0), "reset() must clear Stage 2 LRU caches");
+    BOOST_CHECK_MESSAGE(
+        pipeline.admit(mkMsg(10, pB, 0x02), 0), "reset() must clear all peer caches, not just one");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 }  // namespace bcos::test

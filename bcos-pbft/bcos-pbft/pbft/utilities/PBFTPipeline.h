@@ -251,12 +251,24 @@ public:
         }
     }
 
-    // Clear backpressure for all peers (e.g. after view change)
-    void clearAllBackpressure()
+    // Reset all per-peer pipeline state. Called by the engine on state
+    // discontinuities (view-change completion, sealer-set rotation) where
+    // continuing to dedup against the previous epoch's traffic offers no
+    // value. Both Stage 2 (LRU dedup caches + peer-LRU tracker) and Stage 3
+    // (per-peer pending counters + backpressure set) are cleared.
+    void reset()
     {
-        std::scoped_lock lock(m_mutex);
-        m_backpressuredPeers.clear();
-        m_peerPendingCount.clear();
+        {
+            std::scoped_lock lock(m_mutex);
+            m_backpressuredPeers.clear();
+            m_peerPendingCount.clear();
+        }
+        {
+            std::scoped_lock lock(m_lruMutex);
+            m_lruCaches.clear();
+            m_peerLruOrder.clear();
+            m_peerLruIndex.clear();
+        }
     }
 
     bool isPeerBackpressured(PeerID const& peer) const
