@@ -180,13 +180,12 @@ public:
 
         // ── Stage 2: LRU per-peer dedup (FIB-146) ───────────────────────────
         // Drop messages whose (type:index:hash) tuple was recently seen from
-        // this peer. The LRU cache evicts the oldest entry when full, bounding
-        // per-peer memory while still catching near-term re-queued duplicates.
+        // this peer. Per-peer LRU eviction bounds total tracked peers at
+        // m_cfg.maxPeers (FIB-146 follow-up).
         {
-            auto& cache = getOrCreateCache(peerKey);
             std::string dedupKey =
                 std::to_string(type) + ":" + std::to_string(msg->index()) + ":" + msg->hash().hex();
-            if (cache.seenAndInsert(dedupKey))
+            if (dedupSeenAndInsert(peerKey, dedupKey))
             {
                 PBFT_LOG(TRACE) << LOG_DESC("[PBFTPipeline] Stage2: drop dedup msg")
                                 << LOG_KV("type", type) << LOG_KV("index", msg->index());
@@ -280,16 +279,36 @@ private:
         return from ? from->hex() : "unknown";
     }
 
-    PeerLRUCache& getOrCreateCache(PeerID const& peer)
+    // FIB-146 follow-up: dedup check + peer-LRU eviction in a single critical
+    // section. Returns true if the key was already present (drop the message);
+    // false if newly inserted (admit). Replaces the previous getOrCreateCache
+    // pattern which leaked a reference out of the lock, exposing the per-peer
+    // cache to data races and (post-eviction) use-after-erase.
+    bool dedupSeenAndInsert(PeerID const& peer, std::string const& dedupKey)
     {
         std::scoped_lock lock(m_lruMutex);
         auto it = m_lruCaches.find(peer);
-        if (it == m_lruCaches.end())
+        if (it != m_lruCaches.end())
         {
-            m_lruCaches.emplace(peer, PeerLRUCache{m_cfg.lruCapacity});
-            return m_lruCaches.at(peer);
+            // Bump peer to MRU in the peer-LRU tracker
+            m_peerLruOrder.splice(m_peerLruOrder.begin(), m_peerLruOrder, m_peerLruIndex.at(peer));
+            return it->second.seenAndInsert(dedupKey);
         }
-        return it->second;
+
+        // New peer: enforce maxPeers cap by evicting LRU peer if needed
+        if (m_lruCaches.size() >= m_cfg.maxPeers)
+        {
+            auto const& victim = m_peerLruOrder.back();
+            m_lruCaches.erase(victim);
+            m_peerLruIndex.erase(victim);
+            m_peerLruOrder.pop_back();
+        }
+
+        // Insert new peer at MRU position
+        m_peerLruOrder.push_front(peer);
+        m_peerLruIndex.emplace(peer, m_peerLruOrder.begin());
+        auto [inserted, _] = m_lruCaches.emplace(peer, PeerLRUCache{m_cfg.lruCapacity});
+        return inserted->second.seenAndInsert(dedupKey);
     }
 
     Config m_cfg;
@@ -298,8 +317,14 @@ private:
     std::unordered_map<PeerID, size_t> m_peerPendingCount;
     std::unordered_set<PeerID> m_backpressuredPeers;
 
+    // FIB-146 follow-up: m_lruMutex now guards three coupled structures —
+    // m_lruCaches (cache storage), m_peerLruOrder (front = MRU peer), and
+    // m_peerLruIndex (peer → iterator into m_peerLruOrder). All three must
+    // be mutated together when admitting / evicting; see dedupSeenAndInsert.
     std::mutex m_lruMutex;
     std::unordered_map<PeerID, PeerLRUCache> m_lruCaches;
+    std::list<PeerID> m_peerLruOrder;
+    std::unordered_map<PeerID, std::list<PeerID>::iterator> m_peerLruIndex;
 };
 
 }  // namespace bcos::consensus
