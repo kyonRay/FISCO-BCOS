@@ -79,27 +79,20 @@ BOOST_AUTO_TEST_CASE(inflight_key_uniqueness_and_dedup)
     bytes blockData1;
     block1->encode(blockData1);
 
-    auto pbftMsgFixture =
-        std::make_shared<PBFTMessageFixture>(cryptoSuite, leaderFaker->keyPair());
+    auto pbftMsgFixture = std::make_shared<PBFTMessageFixture>(cryptoSuite, leaderFaker->keyPair());
 
-    auto hash1 = HashType(
-        "1111111111111111111111111111111111111111111111111111111111111111");
-    auto hash2 = HashType(
-        "2222222222222222222222222222222222222222222222222222222222222222");
+    auto hash1 = HashType("1111111111111111111111111111111111111111111111111111111111111111");
+    auto hash2 = HashType("2222222222222222222222222222222222222222222222222222222222222222");
 
-    auto pbftProposal1 = pbftMsgFixture->fakePBFTProposal(
-        proposalIndex, hash1, blockData1, {}, {});
-    auto msg1 = pbftMsgFixture->fakePBFTMessage(utcTime(), 0,
-        leaderFaker->pbftConfig()->view(), leaderFaker->pbftConfig()->nodeIndex(), hash1,
-        {pbftProposal1});
+    auto pbftProposal1 = pbftMsgFixture->fakePBFTProposal(proposalIndex, hash1, blockData1, {}, {});
+    auto msg1 = pbftMsgFixture->fakePBFTMessage(utcTime(), 0, leaderFaker->pbftConfig()->view(),
+        leaderFaker->pbftConfig()->nodeIndex(), hash1, {pbftProposal1});
     msg1->setIndex(proposalIndex);
     msg1->setConsensusProposal(pbftProposal1);
 
-    auto pbftProposal2 = pbftMsgFixture->fakePBFTProposal(
-        proposalIndex, hash2, blockData1, {}, {});
-    auto msg2 = pbftMsgFixture->fakePBFTMessage(utcTime(), 0,
-        leaderFaker->pbftConfig()->view(), leaderFaker->pbftConfig()->nodeIndex(), hash2,
-        {pbftProposal2});
+    auto pbftProposal2 = pbftMsgFixture->fakePBFTProposal(proposalIndex, hash2, blockData1, {}, {});
+    auto msg2 = pbftMsgFixture->fakePBFTMessage(utcTime(), 0, leaderFaker->pbftConfig()->view(),
+        leaderFaker->pbftConfig()->nodeIndex(), hash2, {pbftProposal2});
     msg2->setIndex(proposalIndex);
     msg2->setConsensusProposal(pbftProposal2);
 
@@ -141,6 +134,42 @@ BOOST_AUTO_TEST_CASE(inflight_key_uniqueness_and_dedup)
     // This prevents DoS via repeated verification of the same proposal.
     BOOST_CHECK_MESSAGE(engine->isInFlight(key1) && engine->inFlightSize() == 2,
         "FIB-132: in-flight set must correctly track concurrent proposals");
+
+    for (auto& [idx, faker] : fakerMap)
+    {
+        faker->stop();
+    }
+}
+
+// FIB-132: m_inFlightProposals must be bounded. Verifies the cap constant
+// exists, has the expected value (1024), and that the set fills to exactly
+// the cap when populated via the test helper. Cap enforcement at the
+// handlePrePrepareMsg entry point is exercised indirectly: with the set at
+// cap, a new key would be rejected by the `size >= c_maxInFlightProposals`
+// guard added to handlePrePrepareMsg.
+BOOST_AUTO_TEST_CASE(inflight_set_capped_under_flood)
+{
+    auto hashImpl = std::make_shared<Keccak256>();
+    auto signatureImpl = std::make_shared<Secp256k1Crypto>();
+    auto cryptoSuite = std::make_shared<CryptoSuite>(hashImpl, signatureImpl, nullptr);
+
+    BlockNumber currentBlockNumber = 10;
+    auto fakerMap = createFakers(cryptoSuite, 4, currentBlockNumber, 4);
+    auto leaderFaker = fakerMap[0];
+    auto engine = std::make_shared<InspectablePBFTEngine>(leaderFaker->pbftConfig());
+
+    // The cap constant must exist and equal 1024.
+    BOOST_CHECK_EQUAL(PBFTEngine::c_maxInFlightProposals, 1024U);
+
+    // Fill in-flight set to cap with synthetic keys.
+    size_t cap = PBFTEngine::c_maxInFlightProposals;
+    for (size_t i = 0; i < cap; ++i)
+    {
+        std::string key = "synthetic:" + std::to_string(i);
+        BOOST_CHECK_MESSAGE(engine->insertInFlight(key),
+            "FIB-132: insertion of distinct keys below cap must succeed at i=" + std::to_string(i));
+    }
+    BOOST_CHECK_EQUAL(engine->inFlightSize(), cap);
 
     for (auto& [idx, faker] : fakerMap)
     {

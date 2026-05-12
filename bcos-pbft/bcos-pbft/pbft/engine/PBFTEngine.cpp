@@ -1016,6 +1016,7 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
     // FIB-132: guard against re-entering verifyProposal for a proposal that is
     // already being verified. Without this guard a Byzantine peer can flood the
     // same PrePrepare and trigger redundant verification work for every copy.
+    // A hard cap (c_maxInFlightProposals) bounds set size under flood.
     {
         RecursiveGuard lock(m_mutex);
         auto key = inFlightKey(_prePrepareMsg);
@@ -1025,6 +1026,13 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
                                    "handlePrePrepareMsg: proposal already in-flight, skip verify")
                             << printPBFTMsgInfo(_prePrepareMsg);
             return true;
+        }
+        if (m_inFlightProposals.size() >= c_maxInFlightProposals)
+        {
+            PBFT_LOG(WARNING)
+                << LOG_DESC("handlePrePrepareMsg: in-flight set at cap, rejecting new verify")
+                << LOG_KV("cap", c_maxInFlightProposals) << printPBFTMsgInfo(_prePrepareMsg);
+            return false;
         }
         m_inFlightProposals.insert(key);
     }

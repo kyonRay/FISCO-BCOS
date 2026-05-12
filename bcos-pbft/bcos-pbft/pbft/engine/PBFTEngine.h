@@ -246,9 +246,18 @@ protected:
     ledger::LedgerInterface::Ptr m_ledger;
     ledger::LedgerConfig::Ptr m_ledgerConfig;
 
+public:
+    // FIB-132: hard cap on in-flight verifications. Sized well above the
+    // typical worker-pool concurrency so legitimate load never hits it;
+    // reaches the cap only under a flood of distinct invalid PrePrepares
+    // whose verify callbacks lag.
+    static constexpr size_t c_maxInFlightProposals = 1024;
+
+protected:
     // FIB-132: in-flight verification set keyed by "<index>:<hash>:<view>".
     // Prevents the same PrePrepare proposal from being re-submitted to
     // verifyProposal() while a prior verification is still pending.
+    // Bounded by c_maxInFlightProposals; new entries are rejected when full.
     std::unordered_set<std::string> m_inFlightProposals;
 
     // FIB-145 / FIB-146: 3-stage admission pipeline applied before m_msgQueue.push().
