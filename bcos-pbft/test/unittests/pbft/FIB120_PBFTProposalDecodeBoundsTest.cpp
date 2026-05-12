@@ -88,10 +88,61 @@ BOOST_AUTO_TEST_CASE(decode_accepts_normal_signatureList)
 /// must be rejected by PBFTProposal::decode().
 BOOST_AUTO_TEST_CASE(decode_rejects_excessive_nodeList_FIB123)
 {
-    // balanced counts: signatureList is within bound, nodeList overflows
-    auto data = makePBFTProposalBytes(1, 100001);
+    // nodeList overflows; signatureList is also above the cap to keep them in
+    // sync with the FIB-120 mismatch rule — what we are exercising here is the
+    // size cap, not the mismatch check.
+    auto data = makePBFTProposalBytes(100001, 100001);
     bytesConstRef ref(data.data(), data.size());
     BOOST_CHECK_THROW(PBFTProposal{ref}, bcos::Exception);
+}
+
+/// FIB-120: the exact attack scenario described by CertiK — a crafted protobuf
+/// where signatureList.size() > nodeList.size().  Without the mismatch check,
+/// downstream code iterating `i < signatureProofSize()` would index `nodelist(i)`
+/// out of bounds.  decode() must reject the object.
+BOOST_AUTO_TEST_CASE(decode_rejects_signatureList_larger_than_nodeList_FIB120)
+{
+    auto data = makePBFTProposalBytes(/*sigCount=*/5, /*nodeCount=*/2);
+    bytesConstRef ref(data.data(), data.size());
+    BOOST_CHECK_THROW(PBFTProposal{ref}, bcos::Exception);
+}
+
+/// FIB-120: the inverse direction — signatureList.size() < nodeList.size().
+/// signatureProof(i) is bound by signatureProofSize() so this direction is not
+/// the original OOB path, but it still indicates a malformed proposal and must
+/// be rejected for symmetry and to satisfy CertiK's "1:1 correspondence" rule.
+BOOST_AUTO_TEST_CASE(decode_rejects_signatureList_smaller_than_nodeList_FIB120)
+{
+    auto data = makePBFTProposalBytes(/*sigCount=*/2, /*nodeCount=*/5);
+    bytesConstRef ref(data.data(), data.size());
+    BOOST_CHECK_THROW(PBFTProposal{ref}, bcos::Exception);
+}
+
+/// FIB-120: a particularly nasty case — non-empty signatureList with empty
+/// nodeList.  signatureProof(0) would read nodelist(0) on an empty repeated
+/// field, which is the textbook UB CertiK describes.
+BOOST_AUTO_TEST_CASE(decode_rejects_nonempty_signatureList_empty_nodeList_FIB120)
+{
+    auto data = makePBFTProposalBytes(/*sigCount=*/1, /*nodeCount=*/0);
+    bytesConstRef ref(data.data(), data.size());
+    BOOST_CHECK_THROW(PBFTProposal{ref}, bcos::Exception);
+}
+
+/// FIB-120 defensive: signatureProof() must not be reachable with an
+/// out-of-bounds index, regardless of how the underlying proposal got there.
+/// Build a PBFTRawProposal manually with mismatched sizes and confirm
+/// signatureProof() throws rather than triggering UB.
+BOOST_AUTO_TEST_CASE(signatureProof_throws_on_out_of_bounds_FIB120)
+{
+    auto raw = std::make_shared<PBFTRawProposal>();
+    raw->mutable_proposal()->set_index(1);
+    raw->mutable_proposal()->set_hash("hash");
+    // signature is set but nodelist is empty — index 0 is OOB on nodelist.
+    raw->add_signaturelist("sig");
+
+    PBFTProposal proposal{raw};  // direct construction bypasses decode()
+
+    BOOST_CHECK_THROW(proposal.signatureProof(0), bcos::Exception);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
