@@ -30,7 +30,7 @@
  *             Commit and CheckPoint: always admitted, never suppressed.
  *
  * @file PBFTPipeline.h
- * @author: claude
+ * @author: kyonRay
  * @date 2026-05-07
  */
 #pragma once
@@ -114,7 +114,7 @@ public:
         // Stage 3: max pending PrePrepare+Prepare messages per peer before backpressure
         size_t perPeerCapacity{64};
 
-        // Stage 2: LRU cache capacity (per peer, currently stub)
+        // Stage 2: per-peer LRU dedup cache capacity (FIB-146).
         size_t lruCapacity{256};
     };
 
