@@ -195,6 +195,47 @@ BOOST_AUTO_TEST_CASE(oversized_preparedProposalList_rejected_at_decode)
     BOOST_CHECK_NO_THROW({ auto msg = std::make_shared<PBFTViewChangeMsg>(ref); });
 }
 
+/// FIB-121 Issue #1 (ordering after decode): decoding a ViewChange with
+/// multiple preparedProposals must yield the list in original protocol order.
+/// This pins the iteration semantics of deserializeToObject — a regression
+/// here (e.g. accidentally reversed iteration) would silently shuffle proposals.
+BOOST_AUTO_TEST_CASE(preparedProposals_preserve_order_after_decode)
+{
+    RawViewChangeMessage raw;
+    auto* base = raw.mutable_message();
+    base->set_version(1);
+    base->set_view(7);
+    base->set_index(99);
+    base->set_hash(std::string(32, 'X'));
+
+    // Three preparedProposals with distinct indices so we can assert order.
+    constexpr int kCount = 3;
+    constexpr int kIndices[kCount] = {11, 22, 33};
+    for (int idx : kIndices)
+    {
+        auto* prep = raw.add_preparedproposals();
+        BaseMessage baseForPrep;
+        baseForPrep.set_version(1);
+        baseForPrep.set_view(7);
+        baseForPrep.set_index(idx);
+        prep->set_hashfieldsdata(baseForPrep.SerializeAsString());
+        auto* prepConsensus = prep->mutable_consensusproposal();
+        prepConsensus->mutable_proposal()->set_index(idx);
+    }
+    std::string s = raw.SerializeAsString();
+    bcos::bytes data(s.begin(), s.end());
+    bcos::bytesConstRef ref(data.data(), data.size());
+
+    auto msg = std::make_shared<PBFTViewChangeMsg>(ref);
+    const auto& preps = msg->preparedProposals();
+    BOOST_REQUIRE_EQUAL(preps.size(), static_cast<size_t>(kCount));
+    for (int i = 0; i < kCount; ++i)
+    {
+        BOOST_REQUIRE(preps[i]->consensusProposal() != nullptr);
+        BOOST_CHECK_EQUAL(preps[i]->consensusProposal()->index(), kIndices[i]);
+    }
+}
+
 /// FIB-121 Issue #1 (bad bytes): feeding garbage to the
 /// bytesConstRef constructor must throw cleanly (no crash, no UB).
 BOOST_AUTO_TEST_CASE(bad_protobuf_bytes_rejected_at_decode)
