@@ -160,7 +160,7 @@ BOOST_AUTO_TEST_CASE(distinct_messages_all_admitted)
 BOOST_AUTO_TEST_CASE(lru_eviction_allows_reentry)
 {
     PBFTPipeline::Config cfg;
-    cfg.lruCapacity = 4;   // small cache to force eviction quickly
+    cfg.lruCapacity = 4;  // small cache to force eviction quickly
     cfg.perPeerCapacity = 200;
     PBFTPipeline pipeline(cfg);
 
@@ -186,6 +186,84 @@ BOOST_AUTO_TEST_CASE(lru_eviction_allows_reentry)
     auto evictedMsg = makeLRUMsg(PacketType::PreparePacket, 30, peer, hashes[0]);
     BOOST_CHECK_MESSAGE(pipeline.admit(evictedMsg, 0),
         "FIB-146: evicted key must be re-admitted after LRU eviction");
+}
+
+// FIB-146 Stage 1b: messages with index > lastApplied + 2 * waterMarkLimit are
+// dropped at admission so they never enter m_msgQueue. This prevents a Byzantine
+// peer from filling the queue with far-future PBFT packets that the worker
+// would otherwise repeatedly pop/re-push (CPU busy-spin path).
+BOOST_AUTO_TEST_CASE(far_future_preprepare_dropped_at_admission)
+{
+    PBFTPipeline::Config cfg;
+    cfg.perPeerCapacity = 100;
+    cfg.lruCapacity = 8;
+    PBFTPipeline pipeline(cfg);
+
+    auto peer = makeLRUPeer("peerFuture");
+    int64_t lastApplied = 100;
+    int64_t waterMark = 50;
+    int64_t maxFuture = lastApplied + 2 * waterMark;  // 200
+
+    // index = maxFuture → admitted (boundary inclusive)
+    HashType hashAtBound;
+    hashAtBound[0] = 0x01;
+    auto atBound = makeLRUMsg(PacketType::PrePreparePacket, maxFuture, peer, hashAtBound);
+    BOOST_CHECK_MESSAGE(pipeline.admit(atBound, lastApplied, maxFuture),
+        "FIB-146 Stage1b: PrePrepare at exactly maxFuture must be admitted");
+
+    // index = maxFuture + 1 → dropped
+    HashType hashJustOver;
+    hashJustOver[0] = 0x02;
+    auto justOver = makeLRUMsg(PacketType::PrePreparePacket, maxFuture + 1, peer, hashJustOver);
+    BOOST_CHECK_MESSAGE(!pipeline.admit(justOver, lastApplied, maxFuture),
+        "FIB-146 Stage1b: PrePrepare beyond maxFuture must be dropped");
+
+    // Very far future → dropped
+    HashType hashFar;
+    hashFar[0] = 0x03;
+    auto farFuture = makeLRUMsg(PacketType::PrePreparePacket, lastApplied + 10000, peer, hashFar);
+    BOOST_CHECK_MESSAGE(!pipeline.admit(farFuture, lastApplied, maxFuture),
+        "FIB-146 Stage1b: PrePrepare at lastApplied+10000 must be dropped");
+}
+
+// Safety-critical Commit/CheckPoint must bypass Stage 1b (same rationale as
+// Stage 1): never drop messages required for consensus liveness.
+BOOST_AUTO_TEST_CASE(far_future_commit_still_admitted)
+{
+    PBFTPipeline::Config cfg;
+    cfg.perPeerCapacity = 100;
+    cfg.lruCapacity = 8;
+    PBFTPipeline pipeline(cfg);
+
+    auto peer = makeLRUPeer("peerCommit");
+    int64_t lastApplied = 100;
+    int64_t maxFuture = 200;
+
+    HashType hashCommit;
+    hashCommit[0] = 0x10;
+    auto farCommit = makeLRUMsg(PacketType::CommitPacket, 99999, peer, hashCommit);
+    BOOST_CHECK_MESSAGE(pipeline.admit(farCommit, lastApplied, maxFuture),
+        "FIB-146 Stage1b: Commit must bypass future-height filter");
+
+    HashType hashChk;
+    hashChk[0] = 0x11;
+    auto farChk = makeLRUMsg(PacketType::CheckPoint, 99999, peer, hashChk);
+    BOOST_CHECK_MESSAGE(pipeline.admit(farChk, lastApplied, maxFuture),
+        "FIB-146 Stage1b: CheckPoint must bypass future-height filter");
+}
+
+// Default maxFutureIndex (when caller omits the third arg) must preserve
+// backward-compatibility — no future-filter is applied. Verifies the default
+// argument path so older test cases that pass only two args keep passing.
+BOOST_AUTO_TEST_CASE(default_max_future_disables_filter)
+{
+    PBFTPipeline pipeline;
+    auto peer = makeLRUPeer("peerDefault");
+    HashType h;
+    h[0] = 0x20;
+    auto msg = makeLRUMsg(PacketType::PrePreparePacket, 1'000'000'000, peer, h);
+    BOOST_CHECK_MESSAGE(
+        pipeline.admit(msg, 0), "FIB-146 Stage1b: two-arg admit() must not apply future-filter");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

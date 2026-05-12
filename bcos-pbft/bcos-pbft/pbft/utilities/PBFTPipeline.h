@@ -41,6 +41,7 @@
 #include <oneapi/tbb/concurrent_unordered_map.h>
 #include <atomic>
 #include <functional>
+#include <limits>
 #include <list>
 #include <mutex>
 #include <string>
@@ -121,8 +122,12 @@ public:
     PBFTPipeline() : m_cfg{} {}
 
     // Return true if the message should be admitted to m_msgQueue.
-    // Takes the lastApplied block number for Stage 1.
-    bool admit(MessagePtr const& msg, bcos::protocol::BlockNumber lastApplied)
+    // - lastApplied: Stage 1 stale-height filter drops messages strictly below this.
+    // - maxFutureIndex: Stage 1b future-height filter drops messages strictly above
+    //   this (FIB-146). Caller should pass committedIndex + 2 * waterMarkLimit().
+    //   Defaults to INT64_MAX so legacy two-arg callers keep working.
+    bool admit(MessagePtr const& msg, bcos::protocol::BlockNumber lastApplied,
+        bcos::protocol::BlockNumber maxFutureIndex = std::numeric_limits<int64_t>::max())
     {
         auto peerKey = peerIDKey(msg);
         auto type = msg->packetType();
@@ -135,6 +140,21 @@ public:
             PBFT_LOG(TRACE) << LOG_DESC("[PBFTPipeline] Stage1: drop stale msg")
                             << LOG_KV("type", type) << LOG_KV("index", msg->index())
                             << LOG_KV("lastApplied", lastApplied);
+            return false;
+        }
+
+        // ── Stage 1b: future-height filter (FIB-146) ────────────────────────
+        // Drop messages whose index is more than 2 × pipeline-width past the
+        // last applied block. Safety-critical packets (Commit/CheckPoint) bypass
+        // this filter for the same reason they bypass Stage 1 — never drop
+        // messages required for consensus liveness. The cap prevents a Byzantine
+        // peer from filling m_msgQueue with far-future packets that the worker
+        // would otherwise repeatedly pop/re-push (CPU busy-spin).
+        if (!isSafetyCritical(type) && msg->index() > maxFutureIndex)
+        {
+            PBFT_LOG(TRACE) << LOG_DESC("[PBFTPipeline] Stage1b: drop far-future msg")
+                            << LOG_KV("type", type) << LOG_KV("index", msg->index())
+                            << LOG_KV("maxFutureIndex", maxFutureIndex);
             return false;
         }
 
