@@ -26,11 +26,12 @@ add_library(ledger
     bcos-ledger/ConsensusNode.cpp
     bcos-ledger/mpt/Nibble.cpp
     bcos-ledger/mpt/HexPrefix.cpp
-    bcos-ledger/mpt/Constants.cpp)
+    bcos-ledger/mpt/Constants.cpp
+    bcos-ledger/mpt/NodeEncoder.cpp)
 target_include_directories(ledger PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include/bcos-ledger>)
-target_link_libraries(ledger PUBLIC tool protocol-tars codec table bcos-concepts Boost::serialization)
+target_link_libraries(ledger PUBLIC tool protocol-tars codec table bcos-concepts bcos-crypto Boost::serialization)
 set_target_properties(ledger PROPERTIES UNITY_BUILD "ON")
 
 # test related
