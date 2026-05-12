@@ -69,7 +69,7 @@ public:
     // Inserts the key into the cache (evicting the LRU entry if full).
     bool seenAndInsert(std::string const& key)
     {
-        auto it = m_map.find(key);
+        const auto it = m_map.find(key);
         if (it != m_map.end())
         {
             // Cache hit: move to front (most recently used)
@@ -111,15 +111,29 @@ public:
 
     struct Config
     {
+        // Master switch. When false, admit() always returns true (full bypass).
+        bool enabled{true};
+
         // Stage 3: max pending PrePrepare+Prepare messages per peer before backpressure
         size_t perPeerCapacity{64};
 
         // Stage 2: per-peer LRU dedup cache capacity (FIB-146).
         size_t lruCapacity{256};
+
+        // Cap on the number of distinct peers tracked at once. When exceeded,
+        // the least-recently-used peer's entire LRU cache is evicted to make
+        // room (FIB-146 follow-up).
+        size_t maxPeers{1024};
     };
 
-    explicit PBFTPipeline(Config cfg) : m_cfg(std::move(cfg)) {}
+    explicit PBFTPipeline(Config cfg) : m_cfg(cfg) {}
     PBFTPipeline() : m_cfg{} {}
+
+    // Reconfigure in place. Only safe to call before any concurrent admit()
+    // begins (i.e., during engine construction or while the worker is paused).
+    // PBFTPipeline holds mutex members so is non-movable; this method lets the
+    // engine apply node.ini config without recreating the instance.
+    void configure(Config cfg) noexcept { m_cfg = cfg; }
 
     // Return true if the message should be admitted to m_msgQueue.
     // - lastApplied: Stage 1 stale-height filter drops messages strictly below this.
@@ -129,6 +143,12 @@ public:
     bool admit(MessagePtr const& msg, bcos::protocol::BlockNumber lastApplied,
         bcos::protocol::BlockNumber maxFutureIndex = std::numeric_limits<int64_t>::max())
     {
+        // Master switch — disabled pipeline admits everything (bypass).
+        if (!m_cfg.enabled)
+        {
+            return true;
+        }
+
         auto peerKey = peerIDKey(msg);
         auto type = msg->packetType();
 
@@ -183,10 +203,10 @@ public:
 
         // PrePrepare/Prepare and others: check per-peer backpressure and capacity.
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::scoped_lock lock(m_mutex);
 
             // If peer is under backpressure, suppress PrePrepare/Prepare
-            if (m_backpressuredPeers.count(peerKey))
+            if (m_backpressuredPeers.contains(peerKey))
             {
                 PBFT_LOG(TRACE) << LOG_DESC("[PBFTPipeline] Stage3: drop backpressured peer msg")
                                 << LOG_KV("type", type) << LOG_KV("index", msg->index());
@@ -219,7 +239,7 @@ public:
         {
             return;  // safety-critical messages weren't counted
         }
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutex);
         auto it = m_peerPendingCount.find(peerKey);
         if (it != m_peerPendingCount.end() && it->second > 0)
         {
@@ -235,20 +255,20 @@ public:
     // Clear backpressure for all peers (e.g. after view change)
     void clearAllBackpressure()
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutex);
         m_backpressuredPeers.clear();
         m_peerPendingCount.clear();
     }
 
     bool isPeerBackpressured(PeerID const& peer) const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_backpressuredPeers.count(peer) > 0;
+        std::scoped_lock lock(m_mutex);
+        return m_backpressuredPeers.contains(peer);
     }
 
     size_t peerPendingCount(PeerID const& peer) const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutex);
         auto it = m_peerPendingCount.find(peer);
         return it != m_peerPendingCount.end() ? it->second : 0U;
     }
@@ -262,7 +282,7 @@ private:
 
     PeerLRUCache& getOrCreateCache(PeerID const& peer)
     {
-        std::lock_guard<std::mutex> lock(m_lruMutex);
+        std::scoped_lock lock(m_lruMutex);
         auto it = m_lruCaches.find(peer);
         if (it == m_lruCaches.end())
         {

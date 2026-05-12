@@ -75,6 +75,15 @@ PBFTEngine::PBFTEngine(PBFTConfig::Ptr _config)
     // Timer is used to manage checkpoint timeout
     m_timer =
         std::make_shared<PBFTTimer>(m_config->checkPointTimeoutInterval(), "checkPointResendTimer");
+
+    // Configure the admission pipeline from PBFTConfig (originally from node.ini).
+    // Safe to call here because the worker thread has not yet been started.
+    PBFTPipeline::Config pipelineCfg;
+    pipelineCfg.enabled = m_config->pipelineAdmissionEnabled();
+    pipelineCfg.perPeerCapacity = m_config->pipelinePerPeerCapacity();
+    pipelineCfg.lruCapacity = m_config->pipelineLruCapacity();
+    pipelineCfg.maxPeers = m_config->pipelineMaxPeers();
+    m_pipeline.configure(pipelineCfg);
 }
 
 void PBFTEngine::initSendResponseHandler()
