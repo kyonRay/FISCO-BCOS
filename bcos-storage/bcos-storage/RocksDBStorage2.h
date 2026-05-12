@@ -43,6 +43,12 @@ public:
     using Key = KeyType;
     using Value = ValueType;
 
+    /// Expose the underlying rocksdb::DB pointer for callers that need to build
+    /// cross-prefix WriteBatches (e.g. the MPT module).  The returned pointer is
+    /// non-owning: callers MUST NOT delete or Close it.  Lifetime is tied to the
+    /// ::rocksdb::DB object passed at construction.
+    ::rocksdb::DB* rawDb() const noexcept { return &m_rocksDB.get(); }
+
     auto readSomeRaw(::ranges::input_range auto keys, auto&&... /*args*/)
         -> task::Task<std::vector<StorageValueType<ValueType>>>
     {
