@@ -68,6 +68,11 @@ public:
 
     std::shared_ptr<PBFTConfig> pbftConfig() { return m_config; }
 
+    // FIB-146 follow-up: exposed so the initializer can wire reset() to
+    // sealer-set rotation. Not for use on the hot path — admit() / consumed()
+    // are called via the engine itself.
+    PBFTPipeline& pipeline() { return m_pipeline; }
+
     // Receive PBFT message package from frontService
     virtual void onReceivePBFTMessage(bcos::Error::Ptr _error, std::string const& _id,
         bcos::crypto::NodeIDPtr _nodeID, bytesConstRef _data);

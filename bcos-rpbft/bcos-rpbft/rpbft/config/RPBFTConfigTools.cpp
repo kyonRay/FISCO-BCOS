@@ -62,6 +62,13 @@ void RPBFTConfigTools::updateWorkingSealerNodeList(
     m_workingSealerNodeNum = m_consensusNodeList.size();
     m_workingSealerNodeListUpdated = true;
 
+    // FIB-146 follow-up: notify subscribers (e.g. PBFTPipeline) that the
+    // sealer set rotated. Fires only when the list actually changed.
+    if (m_onSealerListChanged)
+    {
+        m_onSealerListChanged();
+    }
+
     RPBFT_LOG(INFO) << METRIC << LOG_DESC("updateWorkingConsensusNodeList")
                     << LOG_KV("workingNodeNum", m_workingSealerNodeNum)
                     << LOG_KV("nodeIndexInWorkingSealer", m_nodeIndexInWorkingSealer)

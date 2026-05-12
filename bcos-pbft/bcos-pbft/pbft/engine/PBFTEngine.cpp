@@ -1507,6 +1507,10 @@ void PBFTEngine::reachNewView(ViewType _view)
     PBFT_LOG(INFO) << LOG_DESC("reachNewView") << m_config->printCurrentState()
                    << LOG_KV("lowWaterMark", m_config->lowWaterMark())
                    << LOG_KV("highWaterMark", m_config->highWaterMark());
+    // FIB-146 follow-up: dedup state from the previous view has no value after
+    // we cross into a new view — drop it to bound long-term memory and avoid
+    // stale entries shadowing legitimate first-occurrence msgs in the new view.
+    m_pipeline.reset();
     m_cacheProcessor->tryToApplyCommitQueue();
     m_cacheProcessor->tryToCommitStableCheckPoint();
 }
