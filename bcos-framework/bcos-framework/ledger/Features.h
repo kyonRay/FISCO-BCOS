@@ -1,9 +1,6 @@
 #pragma once
-#include "../ledger/LedgerTypeDef.h"
 #include "../protocol/Protocol.h"
-#include "../storage/Entry.h"
 #include "../storage2/Storage.h"
-#include "../transaction-executor/StateKey.h"
 #include "bcos-task/Task.h"
 #include <bcos-utilities/Exceptions.h>
 #include <array>
@@ -16,6 +13,24 @@
 #include <range/v3/view/zip.hpp>
 #include <set>
 #include <string_view>
+
+// Forward declarations only — the storage-I/O member templates below take these
+// types as concept arguments / parameter types, which need name visibility but
+// not full definitions at declaration time. Full definitions are pulled in by
+// FeaturesStorage.h, where the implementations and concrete call sites live.
+// Breaking the include of storage/Entry.h / StateKey.h here is what lets
+// storage/Entry.h include Features.h without forming a cycle through
+// StateKey.h's `using StateValue = storage::Entry`.
+namespace bcos::storage
+{
+class Entry;
+}
+namespace bcos::executor_v1
+{
+class StateKey;
+class StateKeyView;
+}  // namespace bcos::executor_v1
+
 namespace bcos::ledger
 {
 DERIVE_BCOS_EXCEPTION(NoSuchFeatureError);
@@ -63,7 +78,6 @@ public:
         bugfix_auth_check_revert_status,
         bugfix_auth_table_raw_address,
         bugfix_auth_table_squatting,
-        bugfix_v1_executive_wrapper,
         bugfix_v1_exec_error_gas_used,
         bugfix_v1_precompiled_error_gas,      // FIB-76/79/80: precompiled gas overflow check,
                                               // exception safety, and use remaining gas on revert
@@ -88,7 +102,6 @@ public:
         feature_raw_address,
         feature_rpbft_vrf_type_secp256k1,
         feature_balance_policy2,  // 转账白名单 Transfer whitelist
-        bugfix_gas_payment_balance_precheck,
     };
 
 private:
@@ -144,8 +157,11 @@ public:
     task::Task<void> readFromStorage(
         storage2::ReadableStorage<executor_v1::StateKeyView> auto& storage, long blockNumber);
 
+    // NOTE: second concept arg used to be executor_v1::StateValue (alias of storage::Entry).
+    // Aliases cannot be forward-declared, so we use storage::Entry directly here so the
+    // declaration parses with just a forward declaration of storage::Entry.
     task::Task<void> writeToStorage(
-        storage2::WritableStorage<executor_v1::StateKey, executor_v1::StateValue> auto& storage,
+        storage2::WritableStorage<executor_v1::StateKey, storage::Entry> auto& storage,
         long blockNumber, bool ignoreDuplicate = true) const;
 };
 
