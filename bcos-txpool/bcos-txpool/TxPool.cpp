@@ -138,19 +138,52 @@ task::Task<void> TxPool::broadcastTransactionBufferByTree(
 {
     if (m_treeRouter != nullptr)
     {
-        auto protocolList =
-            m_transactionSync->config()->frontService()->groupNodeInfo()->nodeProtocolList();
+        // FIB-166: defensively validate group / protocol metadata before dereferencing it.
+        // Pre-handshake invocations (or test paths) can leave groupNodeInfo() null and the
+        // protocol list empty; previously this code dereferenced both unconditionally and
+        // would crash or take the empty-list 'no lower-version peer' path and route via the
+        // tree even when no protocol information was available. Fall back to the flood
+        // broadcast when metadata is missing.
+        auto groupNodeInfo = m_transactionSync->config()->frontService()->groupNodeInfo();
+        if (!groupNodeInfo)
+        {
+            TXPOOL_LOG(WARNING) << LOG_DESC(
+                "broadcastTransactionBufferByTree: groupNodeInfo unavailable, falling back to "
+                "flood broadcast");
+            co_await m_transactionSync->config()->frontService()->broadcastMessage(
+                protocol::NodeType::CONSENSUS_NODE, protocol::SYNC_PUSH_TRANSACTION,
+                ::ranges::views::single(_data));
+            co_return;
+        }
+        auto const& protocolList = groupNodeInfo->nodeProtocolList();
+        if (protocolList.empty())
+        {
+            TXPOOL_LOG(WARNING) << LOG_DESC(
+                "broadcastTransactionBufferByTree: nodeProtocolList empty, falling back to "
+                "flood broadcast");
+            co_await m_transactionSync->config()->frontService()->broadcastMessage(
+                protocol::NodeType::CONSENSUS_NODE, protocol::SYNC_PUSH_TRANSACTION,
+                ::ranges::views::single(_data));
+            co_return;
+        }
         // NOTE: the protocolList is a vector which sorted by nodeID, and is NOT convenience
         // for filter whether send new protocol or not. So one-size-fits-all approach, if
         // protocolList have lower V2 version, broadcast SYNC_PUSH_TRANSACTION by default.
         auto index = ::ranges::find_if(protocolList, [](auto const& protocol) {
-            return protocol->version() < protocol::ProtocolVersion::V2;
+            // FIB-166: skip null entries in the sorted list rather than dereferencing them.
+            // A null protocol entry is treated as "lower version" so we err on the side of
+            // the safer SYNC_PUSH_TRANSACTION fanout, matching the existing pessimistic
+            // behaviour for any pre-V2 peer.
+            return !protocol || protocol->version() < protocol::ProtocolVersion::V2;
         });
         if (index != protocolList.end()) [[unlikely]]
         {
+            // FIB-166: the matched entry may be null when the protocol list contains null
+            // pointers; report -1 in that case rather than dereferencing.
+            auto matchedVersion = (*index) ? static_cast<int>((*index)->version()) : -1;
             TXPOOL_LOG(TRACE) << LOG_DESC(
                                      "broadcastTransactionBufferByTree but have lower version node")
-                              << LOG_KV("index", index->get()->version());
+                              << LOG_KV("index", matchedVersion);
             // have lower V2 version, broadcast SYNC_PUSH_TRANSACTION by default
             co_await m_transactionSync->config()->frontService()->broadcastMessage(
                 protocol::NodeType::CONSENSUS_NODE, protocol::SYNC_PUSH_TRANSACTION,
