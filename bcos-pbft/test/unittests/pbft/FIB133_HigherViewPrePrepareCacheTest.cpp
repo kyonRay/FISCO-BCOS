@@ -181,6 +181,47 @@ BOOST_AUTO_TEST_CASE(testHigherViewPrePrepareRejected)
     BOOST_CHECK_EQUAL(result, false);
 }
 
+// Case D: when _generatedFromNewView==true (view-change recovery path), a higher-view
+// PrePrepare must still be accepted — the FIB-133 guard intentionally only narrows the
+// normal path so view-change recovery is not broken.  This UT pins that contract: future
+// refactors that accidentally apply the strict view check to the new-view branch will
+// flip this test.
+BOOST_AUTO_TEST_CASE(testHigherViewPrePrepareAcceptedInNewViewPath)
+{
+    auto fakerMap = makeCluster();
+
+    PBFTFixture::Ptr followerFaker = fakerMap[0];
+    auto followerConfig = followerFaker->pbftConfig();
+    auto followerEngine = followerFaker->pbftEngine();
+
+    ViewType localView = followerConfig->view();
+    ViewType higherView = localView + 1;
+    BlockNumber proposalIndex = followerConfig->expectedCheckPoint();
+    IndexType leaderIdx = followerConfig->leaderIndex(proposalIndex);
+
+    auto pbftMsgFactory = followerConfig->pbftMessageFactory();
+    auto prePrepare = pbftMsgFactory->createPBFTMsg();
+    prePrepare->setIndex(proposalIndex);
+    prePrepare->setView(higherView);
+    prePrepare->setGeneratedFrom(leaderIdx);
+    prePrepare->setPacketType(PacketType::PrePreparePacket);
+    prePrepare->setVersion(followerConfig->pbftMsgDefaultVersion());
+    prePrepare->setTimestamp(utcTime());
+
+    PBFTFixture::Ptr leaderFaker = fakerMap.count(leaderIdx) ? fakerMap[leaderIdx] : fakerMap[0];
+    auto blockData = fakeBlockData(leaderFaker, proposalIndex);
+    auto proposal = pbftMsgFactory->createPBFTProposal();
+    proposal->setIndex(proposalIndex);
+    proposal->setHash(followerConfig->cryptoSuite()->hashImpl()->hash(blockData));
+    proposal->setData(blockData);
+    prePrepare->setConsensusProposal(proposal);
+    prePrepare->setHash(proposal->hash());
+
+    // _generatedFromNewView=true — FIB-133 guard is intentionally bypassed.
+    bool result = followerEngine->handlePrePrepareMsg(prePrepare, false, true, false);
+    BOOST_CHECK_EQUAL(result, true);
+}
+
 // Case C: lower-view PrePrepare is rejected by existing checkPBFTMsgState() — unchanged.
 BOOST_AUTO_TEST_CASE(testLowerViewPrePrepareAlreadyRejected)
 {
