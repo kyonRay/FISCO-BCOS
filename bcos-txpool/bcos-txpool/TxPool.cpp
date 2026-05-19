@@ -422,6 +422,17 @@ void TxPool::notifyObserverNodeList(
     _onRecvResponse(nullptr);
 }
 
+void TxPool::notifyBlockTxCountLimit(uint64_t _blockTxCountLimit)
+{
+    // FIB-167: keep both the live fillBlock cap and the legacy sync-response cap on
+    // m_maxResponseTxsToNodesWithEmptyTxs in sync with consensus governance. The latter
+    // was also originally derived from blockTxCountLimit at init time, so propagating
+    // here prevents it from going stale after a setSystemConfigPrecompile bump.
+    auto config = m_transactionSync->config();
+    config->setBlockTxCountLimit(_blockTxCountLimit);
+    config->setMaxResponseTxsToNodesWithEmptyTxs(_blockTxCountLimit);
+}
+
 void TxPool::getTxsFromLocalLedger(HashListPtr _txsHash, HashListPtr _missedTxs,
     std::function<void(Error::Ptr, ConstTransactionsPtr)> _onBlockFilled)
 {
@@ -468,6 +479,27 @@ void TxPool::fillBlock(HashListPtr _txsHash,
 {
     ittapi::Report report(
         ittapi::ITT_DOMAINS::instance().TXPOOL, ittapi::ITT_DOMAINS::instance().FILL_BLOCK);
+
+    // FIB-167: enforce an upper bound on caller-controlled txsHash size. Without this
+    // cap, a peer (or a forwarded p2p message) can request fillBlock with millions of
+    // hashes; the function would zip the full input against pool lookups and amplify into
+    // an unbounded ledger-fetch, creating a CPU/memory DoS vector. Reject anything larger
+    // than the chain's current per-block transaction limit. The cap is refreshed on every
+    // committed block via notifyBlockTxCountLimit so consensus-governance changes take
+    // effect immediately instead of using the init-time snapshot.
+    auto const blockTxLimit = m_transactionSync->config()->blockTxCountLimit();
+    if (_txsHash && blockTxLimit > 0 && _txsHash->size() > blockTxLimit)
+    {
+        TXPOOL_LOG(WARNING) << LOG_DESC("fillBlock: txsHash size exceeds blockTxCountLimit, reject")
+                            << LOG_KV("size", _txsHash->size()) << LOG_KV("limit", blockTxLimit);
+        if (_onBlockFilled)
+        {
+            _onBlockFilled(BCOS_ERROR_PTR(CommonError::TransactionsMissing,
+                               "fillBlock: txsHash size exceeds blockTxCountLimit"),
+                nullptr);
+        }
+        return;
+    }
 
     // getTransactions guarantees that txs and *_txsHash have the same size and order
     auto txs = m_txpoolStorage->getTransactions(*_txsHash);
@@ -582,6 +614,9 @@ void TxPool::init()
     txsSyncConfig->setObserverList(ledgerConfig->observerNodeList());
     m_transactionSync->config()->setMaxResponseTxsToNodesWithEmptyTxs(
         ledgerConfig->blockTxCountLimit());
+    // FIB-167: seed the live fillBlock cap with the same value; subsequent updates
+    // arrive via notifyBlockTxCountLimit from PBFT's new-block notifier.
+    m_transactionSync->config()->setBlockTxCountLimit(ledgerConfig->blockTxCountLimit());
     TXPOOL_LOG(INFO) << LOG_DESC("init sync config success");
 }
 
