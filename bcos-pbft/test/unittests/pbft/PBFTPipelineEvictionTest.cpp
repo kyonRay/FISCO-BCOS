@@ -181,6 +181,39 @@ BOOST_AUTO_TEST_CASE(reset_clears_all_pipeline_state)
         pipeline.admit(mkMsg(10, pB, 0x02), 0), "reset() must clear all peer caches, not just one");
 }
 
+// Stage 2 dedup eviction-on-consume.
+//
+// Before fix: any message that reached admit() permanently poisoned the LRU,
+// so a transient downstream rejection (txpool verify, signature, etc.) caused
+// the leader's retry to be silently dropped, and ViewChange messages whose
+// dedup key (type=3:index:propHash) collides across consecutive toView rounds
+// got dedup-trapped. After fix: consumed() releases the LRU slot so the next
+// arrival of the same key is admitted.
+BOOST_AUTO_TEST_CASE(consumed_evicts_stage2_dedup_entry)
+{
+    PBFTPipeline::Config cfg;
+    cfg.lruCapacity = 8;
+    cfg.perPeerCapacity = 100;
+    PBFTPipeline pipeline(cfg);
+
+    auto pX = peer("RX");
+    auto first = mkMsg(10, pX, 0x01);
+
+    BOOST_CHECK(pipeline.admit(first, 0));
+    // Same key arriving while the previous one is still in m_msgQueue
+    // (not yet consumed): must dedup.
+    BOOST_CHECK_MESSAGE(!pipeline.admit(mkMsg(10, pX, 0x01), 0),
+        "duplicate arrival before consumed() must still be deduped");
+
+    // Worker pops the first message — Stage 2 LRU entry is released.
+    pipeline.consumed(first);
+
+    // A subsequent arrival of the same key MUST be admitted (this is the
+    // PBFTEngineTest/testHandlePrePrepareMsg regression case).
+    BOOST_CHECK_MESSAGE(pipeline.admit(mkMsg(10, pX, 0x01), 0),
+        "after consumed(), the same dedup key must be admitted on re-arrival");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 }  // namespace bcos::test

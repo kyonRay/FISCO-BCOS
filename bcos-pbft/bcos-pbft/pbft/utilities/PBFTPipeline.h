@@ -90,6 +90,23 @@ public:
         return false;
     }
 
+    // Drop a key from the cache (no-op if absent). Used when a message is
+    // consumed from m_msgQueue so subsequent legitimate retransmissions /
+    // next-round messages with a colliding key are not blocked.
+    bool evictKey(std::string const& key)
+    {
+        const auto it = m_map.find(key);
+        if (it == m_map.end())
+        {
+            return false;
+        }
+        m_list.erase(it->second);
+        m_map.erase(it);
+        return true;
+    }
+
+    bool empty() const { return m_list.empty(); }
+
 private:
     size_t m_capacity;
     std::list<std::string> m_list;  // front = most recently used
@@ -180,11 +197,15 @@ public:
 
         // ── Stage 2: LRU per-peer dedup (FIB-146) ───────────────────────────
         // Drop messages whose (type:index:hash) tuple was recently seen from
-        // this peer. Per-peer LRU eviction bounds total tracked peers at
-        // m_cfg.maxPeers (FIB-146 follow-up).
+        // this peer AND is currently in-flight in m_msgQueue. Per-peer LRU
+        // eviction bounds total tracked peers at m_cfg.maxPeers.
+        //
+        // Important: the entry is removed in consumed() when the message is
+        // popped off m_msgQueue, so legitimate retransmissions / next-round
+        // messages whose (type,index,hash) collides with an already-handled
+        // packet are not permanently blocked. See FIB-146 followup notes.
         {
-            std::string dedupKey =
-                std::to_string(type) + ":" + std::to_string(msg->index()) + ":" + msg->hash().hex();
+            std::string dedupKey = makeDedupKey(msg);
             if (dedupSeenAndInsert(peerKey, dedupKey))
             {
                 PBFT_LOG(TRACE) << LOG_DESC("[PBFTPipeline] Stage2: drop dedup msg")
@@ -229,11 +250,20 @@ public:
         return true;
     }
 
-    // Call when a message is consumed from m_msgQueue to decrement the counter.
+    // Call when a message is consumed from m_msgQueue.
+    //   * Decrements the per-peer pending counter (Stage 3).
+    //   * Evicts the Stage 2 dedup entry so legitimate retransmissions /
+    //     next-round messages whose (type,index,hash) collides with an
+    //     already-handled packet are not permanently blocked.
     void consumed(MessagePtr const& msg)
     {
         auto peerKey = peerIDKey(msg);
         auto type = msg->packetType();
+
+        // Stage 2 dedup eviction always runs (even for safety-critical packets)
+        // so re-arrivals after handling are admitted.
+        evictDedupEntry(peerKey, makeDedupKey(msg));
+
         if (isSafetyCritical(type))
         {
             return;  // safety-critical messages weren't counted
@@ -289,6 +319,38 @@ private:
     {
         auto from = msg->from();
         return from ? from->hex() : "unknown";
+    }
+
+    // Build the Stage 2 dedup key. Must match in admit() and consumed().
+    static std::string makeDedupKey(MessagePtr const& msg)
+    {
+        return std::to_string(msg->packetType()) + ":" + std::to_string(msg->index()) + ":" +
+               msg->hash().hex();
+    }
+
+    // Drop a Stage 2 dedup entry for the given peer. If the peer's per-peer
+    // cache becomes empty, also drop the peer from the maxPeers LRU tracker
+    // so the slot can be reused (otherwise idle peers would slowly fill the
+    // tracker even though their cache holds nothing).
+    void evictDedupEntry(PeerID const& peer, std::string const& dedupKey)
+    {
+        std::scoped_lock lock(m_lruMutex);
+        auto it = m_lruCaches.find(peer);
+        if (it == m_lruCaches.end())
+        {
+            return;
+        }
+        it->second.evictKey(dedupKey);
+        if (it->second.empty())
+        {
+            auto idx = m_peerLruIndex.find(peer);
+            if (idx != m_peerLruIndex.end())
+            {
+                m_peerLruOrder.erase(idx->second);
+                m_peerLruIndex.erase(idx);
+            }
+            m_lruCaches.erase(it);
+        }
     }
 
     // FIB-146 follow-up: dedup check + peer-LRU eviction in a single critical
