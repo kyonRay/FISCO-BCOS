@@ -110,10 +110,12 @@ public:
         blockHeader.setNumber(number++);
         blockHeader.calculateHash(*hashImpl);
 
+        // 5M gas keeps nested-create tests (e.g. nestConstructor's 10x CREATE chain)
+        // within budget under EIP-2200 correct SSTORE pricing (ADDED=20000, not 5000).
         evmc_message message = {.kind = EVMC_CALL,
             .flags = 0,
             .depth = 0,
-            .gas = 1000000,
+            .gas = 5000000,
             .recipient = address,
             .destination_ptr = nullptr,
             .destination_len = 0,
