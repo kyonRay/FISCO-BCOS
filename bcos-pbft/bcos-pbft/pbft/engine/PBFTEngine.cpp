@@ -75,6 +75,15 @@ PBFTEngine::PBFTEngine(PBFTConfig::Ptr _config)
     // Timer is used to manage checkpoint timeout
     m_timer =
         std::make_shared<PBFTTimer>(m_config->checkPointTimeoutInterval(), "checkPointResendTimer");
+
+    // Configure the admission pipeline from PBFTConfig (originally from node.ini).
+    // Safe to call here because the worker thread has not yet been started.
+    PBFTPipeline::Config pipelineCfg;
+    pipelineCfg.enabled = m_config->pipelineAdmissionEnabled();
+    pipelineCfg.perPeerCapacity = m_config->pipelinePerPeerCapacity();
+    pipelineCfg.lruCapacity = m_config->pipelineLruCapacity();
+    pipelineCfg.maxPeers = m_config->pipelineMaxPeers();
+    m_pipeline.configure(pipelineCfg);
 }
 
 void PBFTEngine::initSendResponseHandler()
@@ -544,6 +553,19 @@ void PBFTEngine::onReceivePBFTMessage(Error::Ptr _error, NodeIDPtr _fromNode, by
             }
             return;
         }
+        // FIB-145 / FIB-146: 3-stage admission pipeline.
+        // Stage 1 drops stale-height messages; Stage 1b drops far-future (>2×
+        // pipeline width past committed) so they cannot trigger the executeWorker
+        // re-queue CPU busy-spin; Stage 3 enforces per-peer capacity. Commit and
+        // CheckPoint bypass Stage 1/1b for consensus liveness.
+        auto lastApplied = m_config->committedProposal() ?
+                               m_config->committedProposal()->index() :
+                               static_cast<bcos::protocol::BlockNumber>(0);
+        auto maxFutureIndex = lastApplied + 2 * m_config->waterMarkLimit();
+        if (!m_pipeline.admit(pbftMsg, lastApplied, maxFutureIndex))
+        {
+            return;
+        }
         m_msgQueue.push(pbftMsg);
         m_signalled.notify_all();
     }
@@ -605,6 +627,8 @@ void PBFTEngine::executeWorker()
             }
             return;
         }
+        // FIB-145: notify pipeline that a message was consumed (decrements per-peer counter)
+        m_pipeline.consumed(pbftMsg);
         handleMsg(pbftMsg);
     }
     else
@@ -783,10 +807,24 @@ CheckResult PBFTEngine::checkSignature(PBFTBaseMessageInterface::Ptr _req)
         return CheckResult::INVALID;
     }
     auto publicKey = nodeInfo->nodeID;
-    if (!_req->verifySignature(m_config->cryptoSuite(), publicKey))
+    // FIB-136: the secp256k1 signature backend throws on malformed input (e.g.
+    // invalid length or recovery id) instead of returning false. Catch here and
+    // treat as INVALID so malformed packets from a Byzantine peer cannot cause
+    // exception churn and ERROR log spam in the consensus worker loop.
+    try
     {
-        PBFT_LOG(WARNING) << LOG_DESC("checkSignature failed for invalid signature")
-                          << printPBFTMsgInfo(_req);
+        if (!_req->verifySignature(m_config->cryptoSuite(), publicKey))
+        {
+            PBFT_LOG(WARNING) << LOG_DESC("checkSignature failed for invalid signature")
+                              << printPBFTMsgInfo(_req);
+            return CheckResult::INVALID;
+        }
+    }
+    catch (std::exception const& _e)
+    {
+        PBFT_LOG(DEBUG) << LOG_DESC("checkSignature: verifySignature threw, treating as invalid")
+                        << printPBFTMsgInfo(_req)
+                        << LOG_KV("what", boost::diagnostic_information(_e));
         return CheckResult::INVALID;
     }
     return CheckResult::VALID;
@@ -881,6 +919,20 @@ bool PBFTEngine::isSyncingHigher()
     return syncNumber >= (committedIndex + m_config->waterMarkLimit());
 }
 
+// FIB-132: build an in-flight dedup key from (index, hash, view)
+std::string PBFTEngine::inFlightKey(std::shared_ptr<PBFTBaseMessageInterface> const& _msg)
+{
+    return std::to_string(_msg->index()) + ":" + _msg->hash().hex() + ":" +
+           std::to_string(_msg->view());
+}
+
+// FIB-132: remove proposal from the in-flight set (called on all verify exit paths)
+void PBFTEngine::eraseInFlightProposal(std::shared_ptr<PBFTBaseMessageInterface> const& _msg)
+{
+    RecursiveGuard lock(m_mutex);
+    m_inFlightProposals.erase(inFlightKey(_msg));
+}
+
 bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
     bool _needVerifyProposal, bool _generatedFromNewView, bool _needCheckSignature)
 {
@@ -970,6 +1022,29 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
     {
         return false;
     }
+    // FIB-132: guard against re-entering verifyProposal for a proposal that is
+    // already being verified. Without this guard a Byzantine peer can flood the
+    // same PrePrepare and trigger redundant verification work for every copy.
+    // A hard cap (c_maxInFlightProposals) bounds set size under flood.
+    {
+        RecursiveGuard lock(m_mutex);
+        auto key = inFlightKey(_prePrepareMsg);
+        if (m_inFlightProposals.count(key))
+        {
+            PBFT_LOG(DEBUG) << LOG_DESC(
+                                   "handlePrePrepareMsg: proposal already in-flight, skip verify")
+                            << printPBFTMsgInfo(_prePrepareMsg);
+            return true;
+        }
+        if (m_inFlightProposals.size() >= c_maxInFlightProposals)
+        {
+            PBFT_LOG(WARNING)
+                << LOG_DESC("handlePrePrepareMsg: in-flight set at cap, rejecting new verify")
+                << LOG_KV("cap", c_maxInFlightProposals) << printPBFTMsgInfo(_prePrepareMsg);
+            return false;
+        }
+        m_inFlightProposals.insert(key);
+    }
     m_config->validator()->verifyProposal(leaderNodeInfo->nodeID,
         _prePrepareMsg->consensusProposal()->index(), block,
         [self, _prePrepareMsg, _generatedFromNewView, leaderNodeInfo, _needCheckSignature, block](
@@ -981,6 +1056,8 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
                 {
                     return;
                 }
+                // FIB-132: always erase the in-flight entry on completion
+                pbftEngine->eraseInFlightProposal(_prePrepareMsg);
                 auto committedIndex = pbftEngine->m_config->committedProposal()->index();
                 if (committedIndex >= _prePrepareMsg->index())
                 {
@@ -1026,6 +1103,11 @@ bool PBFTEngine::handlePrePrepareMsg(PBFTMessageInterface::Ptr _prePrepareMsg,
             }
             catch (std::exception const& _e)
             {
+                // FIB-132: ensure in-flight entry is removed even on exception
+                if (auto pbftEngine = self.lock())
+                {
+                    pbftEngine->eraseInFlightProposal(_prePrepareMsg);
+                }
                 PBFT_LOG(WARNING) << LOG_DESC("exception when calls onVerifyFinishedHandler")
                                   << printPBFTMsgInfo(_prePrepareMsg)
                                   << LOG_KV("message", boost::diagnostic_information(_e));
@@ -1425,6 +1507,10 @@ void PBFTEngine::reachNewView(ViewType _view)
     PBFT_LOG(INFO) << LOG_DESC("reachNewView") << m_config->printCurrentState()
                    << LOG_KV("lowWaterMark", m_config->lowWaterMark())
                    << LOG_KV("highWaterMark", m_config->highWaterMark());
+    // FIB-146 follow-up: dedup state from the previous view has no value after
+    // we cross into a new view — drop it to bound long-term memory and avoid
+    // stale entries shadowing legitimate first-occurrence msgs in the new view.
+    m_pipeline.reset();
     m_cacheProcessor->tryToApplyCommitQueue();
     m_cacheProcessor->tryToCommitStableCheckPoint();
 }

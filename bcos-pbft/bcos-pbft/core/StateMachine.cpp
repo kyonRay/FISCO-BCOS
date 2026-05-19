@@ -133,6 +133,9 @@ void StateMachine::apply(ssize_t, ProposalInterface::ConstPtr _lastAppliedPropos
                                        << LOG_KV("expectedNumber", blockHeader->number())
                                        << LOG_KV("number", _blockHeader->number())
                                        << LOG_KV("timeCost", (utcTime() - startT));
+                // FIB-112: must call _onExecuteFinished on every exit path to avoid
+                // the consensus engine hanging indefinitely waiting for execution.
+                _onExecuteFinished(-1);
                 return;
             }
             _executedProposal->setIndex(_blockHeader->number());
