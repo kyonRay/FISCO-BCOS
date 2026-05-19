@@ -179,6 +179,20 @@ task::Task<void> TxPool::broadcastTransactionBufferByTree(
             }
         }
     }
+    else
+    {
+        // FIB-165: tree topology is unavailable (e.g. observer node, or the router was
+        // never installed). Previously the function silently returned, so callers that
+        // chose the tree path on capability had no signal that the broadcast was a no-op
+        // and transactions could be silently dropped. Fall back to the standard flood
+        // broadcast and log the substitution for diagnostics.
+        TXPOOL_LOG(INFO) << LOG_DESC(
+            "broadcastTransactionBufferByTree: tree router unavailable, falling back to "
+            "flood broadcast");
+        co_await m_transactionSync->config()->frontService()->broadcastMessage(
+            protocol::NodeType::CONSENSUS_NODE, protocol::SYNC_PUSH_TRANSACTION,
+            ::ranges::views::single(_data));
+    }
 }
 
 task::Task<std::vector<protocol::Transaction::ConstPtr>> TxPool::getTransactions(
