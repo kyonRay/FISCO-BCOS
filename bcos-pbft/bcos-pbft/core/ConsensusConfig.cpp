@@ -163,14 +163,22 @@ void bcos::consensus::ConsensusConfig::setFeatures(ledger::Features features)
 bcos::consensus::ConsensusConfig::RotationSnapshot
 bcos::consensus::ConsensusConfig::getRotationSnapshot(protocol::BlockNumber blockNumber) const
 {
-    // FIB-160: take ONE shared_lock for both the rotate decision and the
-    // features copy, so consumers (VRFBasedSealer reads up to three flags
-    // plus the rotate decision) see a consistent view. The override of
-    // shouldRotateSealers in RPBFTConfigTools (RPBFTConfigTools.cpp:168) reads
-    // independent atomic state and does NOT take this lock recursively.
-    std::shared_lock lock(x_features);
+    // FIB-160: the rotate decision and the features bitset live in disjoint
+    // state (shouldRotateSealers reads its own atomics in RPBFTConfigTools;
+    // m_features is the bitset protected by x_features). They do not need to
+    // be observed under the SAME lock to be internally consistent -- the
+    // original cross-read race was strictly between the multiple
+    // features().get(...) calls in VRFBasedSealer, which now use snap.features.
+    //
+    // The virtual call is intentionally OUTSIDE the shared_lock: holding
+    // x_features across a virtual dispatch is a foot-gun. Any future override
+    // that read features() would re-enter the same std::shared_mutex on the
+    // same thread, which is UB (shared_mutex is non-recursive).
     RotationSnapshot snap;
-    snap.features = m_features;
     snap.shouldRotateSealers = shouldRotateSealers(blockNumber);
+    {
+        std::shared_lock lock(x_features);
+        snap.features = m_features;
+    }
     return snap;
 }

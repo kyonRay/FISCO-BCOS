@@ -136,11 +136,11 @@ public:
     ledger::Features features() const override;
     void setFeatures(ledger::Features features) override;
 
-    // FIB-160: atomic snapshot of (rotate decision + features) for consumers
-    // (notably VRFBasedSealer) that must read multiple feature flags AND the
-    // rotate decision under a single consistent view. Reads m_features and
-    // calls the virtual shouldRotateSealers under one shared_lock so the
-    // snapshot does not interleave with a concurrent setFeatures.
+    // FIB-160: bundles the rotate decision with a coherent features snapshot
+    // so VRFBasedSealer's multi-flag selection (curve + blockNumberInput) is
+    // not racing a concurrent setFeatures. The features copy is taken under
+    // x_features; the virtual shouldRotateSealers is dispatched OUTSIDE the
+    // lock (its state is disjoint from m_features). See implementation.
     struct RotationSnapshot
     {
         bool shouldRotateSealers;
