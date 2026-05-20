@@ -79,6 +79,8 @@ public:
     std::string_view sender() const override;
     void forceSender(const bcos::bytes& _sender) override;
     void clearSenderAndHash() override;
+    void verify(
+        bcos::crypto::Hash& hashImpl, bcos::crypto::SignatureCrypto& signatureImpl) override;
 
     void setSignatureData(bcos::bytes& signature);
 

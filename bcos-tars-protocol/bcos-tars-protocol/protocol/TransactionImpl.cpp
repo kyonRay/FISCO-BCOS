@@ -22,12 +22,18 @@
 #include "TransactionImpl.h"
 #include "../impl/TarsHashable.h"
 #include "../impl/TarsSerializable.h"
+#include <bcos-codec/rlp/RLPDecode.h>
+#include <bcos-codec/web3/Web3Transaction.h>
 #include <bcos-concepts/Hash.h>
 #include <bcos-concepts/Serialize.h>
+#include <bcos-crypto/hash/Keccak256.h>
+#include <bcos-utilities/BoostLog.h>
 #include <boost/endian/conversion.hpp>
 #include <boost/exception/diagnostic_information.hpp>
 #include <boost/throw_exception.hpp>
+#include <charconv>
 #include <range/v3/view/any_view.hpp>
+#include <stdexcept>
 
 DERIVE_BCOS_EXCEPTION(EmptyTransactionHash);
 
@@ -178,7 +184,94 @@ void bcostars::protocol::TransactionImpl::clearSenderAndHash()
 {
     m_inner()->sender.clear();
     m_inner()->dataHash.clear();
+    // FIB-New1: discard wire-supplied canonical txHash so verify() recomputes it
+    m_inner()->extraTransactionHash.clear();
     setTainted(true);
+}
+
+void bcostars::protocol::TransactionImpl::verify(
+    bcos::crypto::Hash& hashImpl, bcos::crypto::SignatureCrypto& signatureImpl)
+{
+    // BCOS branch: delegate to base-class behaviour (no change)
+    if (type() != static_cast<uint8_t>(bcos::protocol::TransactionType::Web3Transaction))
+    {
+        bcos::protocol::Transaction::verify(hashImpl, signatureImpl);
+        return;
+    }
+    // Web3 branch
+    if (!tainted())
+    {
+        return;
+    }
+
+    auto const payloadBytes = extraTransactionBytes();
+    auto const signingHash = bcos::crypto::keccak256Hash(payloadBytes);
+
+    auto const signature = signatureData();
+    auto [recovered, sender] = signatureImpl.recoverAddress(hashImpl, signingHash, signature);
+    if (!recovered) [[unlikely]]
+    {
+        BCOS_LOG(INFO) << LOG_DESC("recover sender address failed (Web3)")
+                       << LOG_KV("hash", signingHash.abridged());
+        BOOST_THROW_EXCEPTION(
+            std::invalid_argument("recover sender address from Web3 signature failed"));
+    }
+
+    // Canonical txHash recompute: only when the wire-supplied value was cleared
+    // (e.g. by clearSenderAndHash in P2P import path). RPC pre-write is honoured.
+    if (m_inner()->extraTransactionHash.empty())
+    {
+        if (signature.size() != 65) [[unlikely]]
+        {
+            BOOST_THROW_EXCEPTION(
+                std::invalid_argument("invalid Web3 signature length, expect 65"));
+        }
+        bcos::rpc::Web3Transaction web3Tx;
+        // Construct a non-const bytesRef view into payloadBytes (decode mutates the view,
+        // not the underlying bytes).
+        bcos::bytesRef in(const_cast<bcos::byte*>(payloadBytes.data()), payloadBytes.size());
+        if (auto err = bcos::codec::rlp::decodeFromPayload(in, web3Tx); err) [[unlikely]]
+        {
+            BCOS_LOG(INFO) << LOG_DESC("decode Web3Transaction payload for canonical hash failed")
+                           << LOG_KV("error", err->errorMessage());
+            BOOST_THROW_EXCEPTION(
+                std::invalid_argument("decode Web3Transaction payload for canonical hash failed: " +
+                                      err->errorMessage()));
+        }
+        // Inject signature parts. Signature wire format is r(32) || s(32) || v(1).
+        web3Tx.signatureR.assign(signature.begin(), signature.begin() + 32);
+        web3Tx.signatureS.assign(signature.begin() + 32, signature.begin() + 64);
+        web3Tx.signatureV = static_cast<uint64_t>(signature[64]);
+        // For Legacy+EIP-155, decodeFromPayload does not surface chainId; populate from
+        // the tars data.chainID field (the trusted, locally-computed canonical source).
+        if (!web3Tx.chainId.has_value())
+        {
+            auto const& chainIdStr = m_inner()->data.chainID;
+            if (!chainIdStr.empty())
+            {
+                uint64_t cid = 0;
+                auto const* first = chainIdStr.data();
+                auto const* last = first + chainIdStr.size();
+                auto const result = std::from_chars(first, last, cid);
+                if (result.ec == std::errc{} && cid != 0)
+                {
+                    web3Tx.chainId.emplace(cid);
+                }
+            }
+        }
+        auto const canonicalTxHash = web3Tx.txHash();
+        m_inner()->extraTransactionHash.assign(canonicalTxHash.begin(), canonicalTxHash.end());
+    }
+
+    // dataHash field is the signing-hash for Web3; populate when missing so the
+    // tars-schema invariant ("dataHash always populated post-verify") holds.
+    if (m_inner()->dataHash.empty())
+    {
+        m_inner()->dataHash.assign(signingHash.begin(), signingHash.end());
+    }
+
+    forceSender(sender);
+    setTainted(false);
 }
 void bcostars::protocol::TransactionImpl::setSignatureData(bcos::bytes& signature)
 {
