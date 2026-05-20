@@ -19,14 +19,11 @@
  */
 
 #pragma once
-#include "bcos-tars-protocol/protocol/TransactionImpl.h"
 #include <bcos-codec/rlp/Common.h>
 #include <bcos-codec/rlp/RLPDecode.h>
 #include <bcos-codec/rlp/RLPEncode.h>
 #include <bcos-crypto/interfaces/crypto/CommonType.h>
 #include <bcos-crypto/signature/secp256k1/Secp256k1Crypto.h>
-#include <bcos-rpc/web3jsonrpc/utils/util.h>
-#include <bcos-tars-protocol/protocol/BlockFactoryImpl.h>
 #include <bcos-utilities/FixedBytes.h>
 #include <magic_enum/magic_enum.hpp>
 #include <ostream>
@@ -80,7 +77,6 @@ public:
     bcos::crypto::HashType txHash() const;
     // hash for sign = keccak256(rlp(tx_payload))
     bcos::crypto::HashType hashForSign() const;
-    bcostars::Transaction takeToTarsTransaction();
     uint64_t getSignatureV() const;
     std::string sender() const;
     std::string toString() const noexcept;

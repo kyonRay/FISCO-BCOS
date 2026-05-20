@@ -22,8 +22,6 @@
 #include "bcos-utilities/Common.h"
 #include <bcos-crypto/hash/Keccak256.h>
 #include <bcos-crypto/signature/secp256k1/Secp256k1Crypto.h>
-#include <bcos-framework/protocol/Transaction.h>
-#include <bcos-rpc/jsonrpc/Common.h>
 #include <range/v3/algorithm/find_if.hpp>
 #include <range/v3/algorithm/move.hpp>
 #include <utility>
@@ -125,44 +123,6 @@ bcos::crypto::HashType Web3Transaction::hashForSign() const
     return bcos::crypto::keccak256Hash(bcos::ref(encodeForSign));
 }
 
-bcostars::Transaction Web3Transaction::takeToTarsTransaction()
-{
-    bcostars::Transaction tarsTx{};
-    tarsTx.data.to = (this->to.has_value()) ? this->to.value().hexPrefixed() : "";
-    tarsTx.data.input.reserve(this->data.size());
-    ::ranges::move(this->data, std::back_inserter(tarsTx.data.input));
-
-    tarsTx.data.value = "0x" + this->value.str(0, std::ios_base::hex);
-    tarsTx.data.gasLimit = this->gasLimit;
-    if (static_cast<uint8_t>(this->type) >= static_cast<uint8_t>(TransactionType::EIP1559))
-    {
-        tarsTx.data.maxFeePerGas = "0x" + this->maxFeePerGas.str(0, std::ios_base::hex);
-        tarsTx.data.maxPriorityFeePerGas =
-            "0x" + this->maxPriorityFeePerGas.str(0, std::ios_base::hex);
-    }
-    else
-    {
-        tarsTx.data.gasPrice = "0x" + this->maxPriorityFeePerGas.str(0, std::ios_base::hex);
-    }
-    tarsTx.type = static_cast<tars::Char>(bcos::protocol::TransactionType::Web3Transaction);
-
-    // Only call encodeForSign() once, store in extraTransactionBytes for TxValidator::verify()
-    auto encodedForSign = this->encodeForSign();
-    tarsTx.extraTransactionBytes.reserve(encodedForSign.size());
-    ::ranges::move(encodedForSign, std::back_inserter(tarsTx.extraTransactionBytes));
-
-    // FISCO BCOS signature is r||s||v
-    tarsTx.signature.reserve(crypto::SECP256K1_SIGNATURE_LEN);
-    ::ranges::move(this->signatureR, std::back_inserter(tarsTx.signature));
-    ::ranges::move(this->signatureS, std::back_inserter(tarsTx.signature));
-    tarsTx.signature.push_back(static_cast<tars::Char>(this->signatureV));
-
-    tarsTx.data.nonce = toQuantity(this->nonce);
-    tarsTx.data.chainID = std::to_string(this->chainId.value_or(0));
-
-    // dataHash and sender left empty — TxValidator::verify() computes them
-    return tarsTx;
-}
 std::ostream& operator<<(std::ostream& _out, const TransactionType& _in)
 {
     _out << magic_enum::enum_name(_in);
