@@ -24,6 +24,7 @@
 #include "bcos-protocol/TransactionStatus.h"
 #include <bcos-codec/rlp/Common.h>
 #include <bcos-codec/rlp/RLPDecode.h>
+#include <bcos-codec/web3/Web3Transaction.h>
 #include <bcos-crypto/hash/Keccak256.h>
 #include <bcos-executor/src/Common.h>
 #include <bcos-rpc/Common.h>
@@ -34,7 +35,7 @@
 #include <bcos-rpc/web3jsonrpc/model/CallRequest.h>
 #include <bcos-rpc/web3jsonrpc/model/ReceiptResponse.h>
 #include <bcos-rpc/web3jsonrpc/model/TransactionResponse.h>
-#include <bcos-rpc/web3jsonrpc/model/Web3Transaction.h>
+#include <bcos-rpc/web3jsonrpc/model/Web3TxToTars.h>
 #include <bcos-rpc/web3jsonrpc/utils/Common.h>
 #include <bcos-rpc/web3jsonrpc/utils/util.h>
 #include <bcos-tars-protocol/protocol/TransactionImpl.h>
@@ -436,7 +437,7 @@ task::Task<void> EthEndpoint::sendRawTransaction(const Json::Value& request, Jso
     auto encodeTxHash = web3Tx.txHash();
 
     auto tx = std::make_shared<bcostars::protocol::TransactionImpl>(
-        [m_tx = web3Tx.takeToTarsTransaction()]() mutable { return &m_tx; });
+        [m_tx = bcos::rpc::takeToTarsTransaction(web3Tx)]() mutable { return &m_tx; });
 
 // for web3.eth.sendRawTransaction, return the hash of raw transaction
 #if 0

@@ -21,6 +21,7 @@
 
 #include "../common/RPCFixture.h"
 #include "bcos-utilities/DataConvertUtility.h"
+#include <bcos-codec/web3/Web3Transaction.h>
 #include <bcos-codec/wrapper/CodecWrapper.h>
 #include <bcos-crypto/hash/Keccak256.h>
 #include <bcos-crypto/hash/SM3.h>
@@ -33,7 +34,6 @@
 #include <bcos-rpc/tarsRPC/RPCServer.h>
 #include <bcos-rpc/validator/CallValidator.h>
 #include <bcos-rpc/web3jsonrpc/model/Web3FilterRequest.h>
-#include <bcos-rpc/web3jsonrpc/model/Web3Transaction.h>
 #include <bcos-utilities/Exceptions.h>
 #include <bcos-utilities/testutils/TestPromptFixture.h>
 #include <ostream>

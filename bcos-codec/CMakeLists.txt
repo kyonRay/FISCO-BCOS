@@ -32,6 +32,10 @@ target_include_directories(${CODEC_TARGET} PUBLIC
 )
 target_link_libraries(${CODEC_TARGET} PUBLIC bcos-crypto Microsoft.GSL::GSL)
 set_target_properties(${CODEC_TARGET} PROPERTIES UNITY_BUILD "ON")
+# Web3Transaction uses range/v3 which clashes with std::ranges under newer SDKs when
+# combined with other TUs that pull in <ranges>; exclude from unity build.
+set_source_files_properties(bcos-codec/web3/Web3Transaction.cpp
+    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
 if (TESTS)
     enable_testing()

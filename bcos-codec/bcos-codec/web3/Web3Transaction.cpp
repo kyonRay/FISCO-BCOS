@@ -23,7 +23,6 @@
 #include <bcos-crypto/hash/Keccak256.h>
 #include <bcos-crypto/signature/secp256k1/Secp256k1Crypto.h>
 #include <range/v3/algorithm/find_if.hpp>
-#include <range/v3/algorithm/move.hpp>
 #include <utility>
 
 namespace bcos

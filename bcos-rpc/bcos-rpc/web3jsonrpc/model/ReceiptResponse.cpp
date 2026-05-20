@@ -1,9 +1,9 @@
 #include "ReceiptResponse.h"
 #include "Log.h"
-#include "Web3Transaction.h"
 #include "bcos-crypto/ChecksumAddress.h"
 #include "bcos-utilities/Common.h"
 #include "bcos-utilities/DataConvertUtility.h"
+#include <bcos-codec/web3/Web3Transaction.h>
 #include <cstdint>
 
 void bcos::rpc::combineReceiptResponse(Json::Value& result, protocol::TransactionReceipt& receipt,
