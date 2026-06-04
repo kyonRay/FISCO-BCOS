@@ -13,6 +13,7 @@
 #include <range/v3/view/zip.hpp>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 
 // Forward declarations only — the storage-I/O member templates below take these
 // types as concept arguments / parameter types, which need name visibility but
@@ -108,10 +109,31 @@ public:
         feature_rpbft_vrf_type_secp256k1,
         feature_balance_policy2,     // 转账白名单 Transfer whitelist
         feature_l2_ethereum_compat,  // OP-Stack L2 mode: Ethereum-compatible genesis/predeploys
+        // OP-Stack L2 hardforks (Bedrock..Isthmus). These are NOT driven by the
+        // setUpgradeFeatures/setGenesisFeatures roadmap; their activation schedule
+        // comes one-way from the Solidity SystemConfig predeploy at runtime
+        // (see L2ConfigLoaderImpl). The enum order matches the uint8 id passed to
+        // SystemConfig.getHardforkActivation(uint8), so id == flag index relative
+        // to feature_l2_hardfork_bedrock.
+        feature_l2_hardfork_bedrock,
+        feature_l2_hardfork_regolith,
+        feature_l2_hardfork_canyon,
+        feature_l2_hardfork_delta,
+        feature_l2_hardfork_ecotone,
+        feature_l2_hardfork_fjord,
+        feature_l2_hardfork_granite,
+        feature_l2_hardfork_holocene,
+        feature_l2_hardfork_isthmus,
     };
 
 private:
     std::bitset<magic_enum::enum_count<Flag>()> m_flags;
+    // Sparse L2 hardfork activation timestamps, keyed by Flag. Absent key == not
+    // activated (activationBlockOf returns 0). This is runtime-only state filled
+    // from the Solidity SystemConfig predeploy each block; it is deliberately NOT
+    // serialized with m_flags by readFromStorage/writeToStorage, because Solidity
+    // remains the single authoritative source for the hardfork schedule.
+    std::unordered_map<Flag, uint64_t> m_activationBlocks;
 
 public:
     static Flag string2Flag(std::string_view str);
@@ -132,6 +154,10 @@ public:
     void set(Flag flag);
 
     void set(std::string_view flag) { set(string2Flag(flag)); }
+
+    // L2 hardfork activation accessors. Absent flag -> 0 (not activated).
+    uint64_t activationBlockOf(Flag flag) const;
+    void setActivationBlockOf(Flag flag, uint64_t blockNumber);
 
     void setToShardingDefault(protocol::BlockVersion version);
 

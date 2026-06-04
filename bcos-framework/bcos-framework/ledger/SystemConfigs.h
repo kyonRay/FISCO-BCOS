@@ -48,6 +48,28 @@ enum class SystemConfig
     balance_transfer,
     executor_version,
 };
+// L2 mode config keys. The hardfork-activation key is a prefix: callers append
+// the uint8 hardfork id (matching L2Hardfork below) to form the full key.
+constexpr static std::string_view SYSTEM_KEY_L2_HARDFORK_ACTIVATION =
+    "l2_hardfork_activation_";  // concatenate the hardfork id as suffix
+constexpr static std::string_view SYSTEM_KEY_L2_FEATURE_FLAGS = "l2_feature_flags";
+
+// OP-Stack L2 hardfork ids. These map 1:1 onto the uint8 argument of
+// SystemConfig.getHardforkActivation(uint8) and onto the contiguous
+// Features::Flag::feature_l2_hardfork_* enum range.
+enum class L2Hardfork : uint8_t
+{
+    BEDROCK = 0,
+    REGOLITH = 1,
+    CANYON = 2,
+    DELTA = 3,
+    ECOTONE = 4,
+    FJORD = 5,
+    GRANITE = 6,
+    HOLOCENE = 7,
+    ISTHMUS = 8,
+};
+
 struct SystemConfigs
 {
 public:
@@ -102,7 +124,7 @@ public:
     static auto supportConfigs()
     {
         return ::ranges::views::iota(
-               std::size_t{0}, std::size_t{magic_enum::enum_count<SystemConfig>()}) |
+                   std::size_t{0}, std::size_t{magic_enum::enum_count<SystemConfig>()}) |
                ::ranges::views::transform([](size_t index) {
                    auto flag = magic_enum::enum_value<SystemConfig>(index);
                    return magic_enum::enum_name(flag);

@@ -209,8 +209,18 @@ BOOST_AUTO_TEST_CASE(feature)
         "feature_rpbft_vrf_type_secp256k1",
         "feature_balance_policy2",
         "feature_l2_ethereum_compat",
+        "feature_l2_hardfork_bedrock",
+        "feature_l2_hardfork_regolith",
+        "feature_l2_hardfork_canyon",
+        "feature_l2_hardfork_delta",
+        "feature_l2_hardfork_ecotone",
+        "feature_l2_hardfork_fjord",
+        "feature_l2_hardfork_granite",
+        "feature_l2_hardfork_holocene",
+        "feature_l2_hardfork_isthmus",
     };
     // clang-format on
+    BOOST_CHECK_EQUAL(keys.size(), compareKeys.size());
     for (size_t i = 0; i < keys.size(); ++i)
     {
         BOOST_CHECK_EQUAL(keys[i], compareKeys[i]);

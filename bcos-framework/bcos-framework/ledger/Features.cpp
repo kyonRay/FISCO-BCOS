@@ -82,6 +82,17 @@ void Features::set(Flag flag)
     m_flags[*index] = true;
 }
 
+uint64_t Features::activationBlockOf(Flag flag) const
+{
+    auto it = m_activationBlocks.find(flag);
+    return it == m_activationBlocks.end() ? 0 : it->second;
+}
+
+void Features::setActivationBlockOf(Flag flag, uint64_t blockNumber)
+{
+    m_activationBlocks[flag] = blockNumber;
+}
+
 void Features::setToShardingDefault(protocol::BlockVersion version)
 {
     if (version >= protocol::BlockVersion::V3_3_VERSION &&
