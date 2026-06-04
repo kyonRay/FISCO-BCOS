@@ -3,21 +3,36 @@
 
 # Path to the contracts package (relative to this dir by default).
 CONTRACTS ?= ../../bcos-l2-contracts
+# Path to a clone of the pinned OP fork (see bcos-l2-contracts/op-fork-pin.toml).
+# CI clones into /tmp/op-fork; local users override via OP_FORK=...
+OP_FORK   ?= /tmp/op-fork
 # chain-config YAML (copy chain-config.template.yaml and edit).
 CONFIG    ?= chain-config.yaml
 # Output INI fragment.
 OUT       ?= allocs.ini
 PYTHON    ?= python3
 
-.PHONY: all contracts allocs test clean
+.PHONY: all contracts allocs test clean op-fork
 
 all: allocs
 
-# Compile both the self-written predeploys and the vendored OP fork. The OP fork
-# is a separate compile unit (solc 0.8.15) — see bcos-l2-contracts/README.md.
-contracts:
+# Clone the pinned OP fork into $(OP_FORK). No-op if the dir already exists —
+# bumping the pin is a manual step (see docs/runbook-op-fork-upgrade.md).
+op-fork:
+	@if [ ! -d "$(OP_FORK)" ]; then \
+		COMMIT=$$(grep -E '^commit' $(CONTRACTS)/op-fork-pin.toml | awk -F'"' '{print $$2}'); \
+		git clone --filter=blob:none https://github.com/ethereum-optimism/optimism $(OP_FORK); \
+		git -C $(OP_FORK) checkout $$COMMIT; \
+		git -C $(OP_FORK) submodule update --init --recursive --depth=1 \
+		    packages/contracts-bedrock/lib; \
+	fi
+
+# Compile the self-written predeploys, then the pinned OP fork. The OP fork is
+# a separate compile unit (its own foundry.toml + solc 0.8.15) so we cd into
+# its contracts-bedrock root for that build.
+contracts: op-fork
 	cd $(CONTRACTS) && forge build
-	cd $(CONTRACTS) && forge build --contracts vendor/op-fork/src
+	cd $(OP_FORK)/packages/contracts-bedrock && forge build
 
 # Generate the INI from the (already built) forge artifacts + chain config.
 allocs:
