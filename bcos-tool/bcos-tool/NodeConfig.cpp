@@ -45,6 +45,8 @@
 #include <boost/throw_exception.hpp>
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cstdint>
 #include <set>
 #include <string_view>
 #include <thread>
@@ -254,6 +256,22 @@ void NodeConfig::loadAllocs(boost::property_tree::ptree const& _genesisConfig)
             alloc.balance = u256(balance);
             alloc.nonce = kv.second.get<std::string>("nonce", "0");
             requireDecimalField(kv.first, "nonce", alloc.nonce);
+            // nonce is serialized into the frozen genesis_immutable_hash as a
+            // uint64 big-endian field; reject anything that does not fit uint64
+            // here so the operator gets a clear error instead of a silent
+            // truncation / parse failure at hashing time.
+            {
+                uint64_t nonceValue = 0;
+                auto const* first = alloc.nonce.data();
+                auto const* last = first + alloc.nonce.size();
+                auto [ptr, ec] = std::from_chars(first, last, nonceValue);
+                if (ec != std::errc{} || ptr != last)
+                {
+                    BOOST_THROW_EXCEPTION(
+                        InvalidConfig() << errinfo_comment(
+                            "[" + kv.first + "].nonce must fit in uint64: " + alloc.nonce));
+                }
+            }
             alloc.code = kv.second.get<std::string>("code");
             requireHexField(kv.first, "code", alloc.code, 0, true);
             // storage section is a sibling flat key "<alloc.N>.storage"; '\0'

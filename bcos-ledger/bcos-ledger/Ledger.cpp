@@ -22,6 +22,7 @@
  */
 
 #include "Ledger.h"
+#include "GenesisImmutableHash.h"
 #include "LedgerMethods.h"
 #include "bcos-framework/ledger/EVMAccount.h"
 #include "bcos-framework/ledger/Features.h"
@@ -1826,6 +1827,10 @@ static task::Task<void> importGenesisState(
     }
 }
 
+// SYS_CURRENT_STATE row that pins the immutable genesis fields. Written once on
+// first init; verified (never rewritten) on every subsequent startup.
+static constexpr std::string_view SYS_KEY_GENESIS_IMMUTABLE_HASH = "genesis_immutable_hash";
+
 // sync method, to be split
 // FIXME: too long
 bool Ledger::buildGenesisBlock(
@@ -1855,6 +1860,37 @@ bool Ledger::buildGenesisBlock(
             // check genesisData whether inconsistent with initialGenesisData
             if (existsGenesisData == genesisData)
             {
+                // The base genesisData (generateGenesisData) does NOT cover chain_mode
+                // or allocs. Defend the immutable genesis fields independently: if a
+                // genesis_immutable_hash was stored on first init, it must still match.
+                if (genesis.m_chainMode == "l2" || !genesis.m_allocs.empty())
+                {
+                    auto storedImmutableHashEntry = co_await storage2::readOne(
+                        *m_stateStorage, executor_v1::StateKeyView(
+                                             SYS_CURRENT_STATE, SYS_KEY_GENESIS_IMMUTABLE_HASH));
+                    if (storedImmutableHashEntry)
+                    {
+                        auto computedImmutableHash =
+                            ledger::computeGenesisImmutableHash(genesis).hex();
+                        auto storedImmutableHash = storedImmutableHashEntry->getField(0);
+                        if (storedImmutableHash != computedImmutableHash)
+                        {
+                            LEDGER_LOG(FATAL)
+                                << LOG_BADGE("buildGenesisBlock")
+                                << LOG_DESC("genesis immutable fields changed since first init")
+                                << LOG_KV("stored", storedImmutableHash)
+                                << LOG_KV("computed", computedImmutableHash);
+                            BOOST_THROW_EXCEPTION(
+                                bcos::tool::InvalidConfig() << errinfo_comment(
+                                    "genesis immutable fields (chain_mode / allocs / chainID / "
+                                    "groupID / smCrypto / isWasm) changed since first init; "
+                                    "refuse to start. stored=" +
+                                    std::string(storedImmutableHash) +
+                                    " computed=" + computedImmutableHash));
+                        }
+                    }
+                }
+
                 auto version = genesis.m_compatibilityVersion;
                 if (version > (uint32_t)protocol::BlockVersion::MAX_VERSION ||
                     version < (uint32_t)protocol::BlockVersion::MIN_VERSION)
@@ -2002,6 +2038,13 @@ bool Ledger::buildGenesisBlock(
         // Write default features
         Features features;
         features.setGenesisFeatures(protocol::BlockVersion(versionNumber));
+
+        // L2 mode: enable Ethereum-compatible genesis/predeploys feature. Persisted
+        // together with the other genesis features by setGenesisFeatures() below.
+        if (genesis.m_chainMode == "l2")
+        {
+            features.set(ledger::Features::Flag::feature_l2_ethereum_compat);
+        }
 
         // tx count limit
         Entry txLimitEntry;
@@ -2168,6 +2211,23 @@ bool Ledger::buildGenesisBlock(
         Entry archivedNumber;
         archivedNumber.importFields({"0"});
         stateTable->setRow(SYS_KEY_ARCHIVED_NUMBER, std::move(archivedNumber));
+
+        // L2 mode (or any chain shipping with genesis allocs): lock the immutable
+        // genesis fields by persisting their canonical hash into SYS_CURRENT_STATE.
+        // This write lands in the same genesis commit as every other setRow above,
+        // so it is atomic with the alloc imports done by importGenesisState().
+        if (genesis.m_chainMode == "l2" || !genesis.m_allocs.empty())
+        {
+            auto immutableHash = ledger::computeGenesisImmutableHash(genesis);
+            Entry immutableHashEntry;
+            immutableHashEntry.importFields({immutableHash.hex()});
+            stateTable->setRow(SYS_KEY_GENESIS_IMMUTABLE_HASH, std::move(immutableHashEntry));
+            LEDGER_LOG(INFO) << LOG_BADGE("buildGenesisBlock")
+                             << LOG_DESC("persist genesis_immutable_hash")
+                             << LOG_KV("chainMode", genesis.m_chainMode)
+                             << LOG_KV("allocs", genesis.m_allocs.size())
+                             << LOG_KV("immutableHash", immutableHash.hex());
+        }
         co_return true;
     }());
 }
