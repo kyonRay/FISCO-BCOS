@@ -320,6 +320,15 @@ void NodeConfig::validateL2Invariants()
         BOOST_THROW_EXCEPTION(InvalidConfig() << errinfo_comment(
                                   "pbft chain_mode does not support [alloc.*] section"));
     }
+    // L2 predeploys/genesis are EVM-only (loadExecutorConfig at ~201 already set
+    // m_isWasm before this runs). The WASM executor builds a different precompiled
+    // map and has no L2 ethereum-compat path, so reject the combination up front.
+    if (genesis.m_chainMode == "l2" && genesis.m_isWasm)
+    {
+        BOOST_THROW_EXCEPTION(InvalidConfig() << errinfo_comment(
+                                  "L2 chain_mode requires the EVM executor; is_wasm=true is not "
+                                  "supported"));
+    }
 }
 
 std::string NodeConfig::getServiceName(boost::property_tree::ptree const& _pt,
