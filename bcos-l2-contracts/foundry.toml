@@ -1,0 +1,34 @@
+# FISCO-BCOS OP-Stack L2 Solidity suite.
+#
+# Self-written contracts (src/) pin pragma 0.8.25.
+# Vendored OP fork contracts (vendor/op-fork/) pin pragma 0.8.15 (their own
+# unmodified source). forge resolves the solc version per-file from each
+# file's pragma, so we deliberately do NOT set a single project-wide `solc`
+# pin — that would reject the 0.8.15 vendored sources. evm_version follows
+# the OP fork build (cancun) so the vendored contracts compile as upstream.
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+optimizer = true
+optimizer_runs = 999999
+via_ir = false
+evm_version = "cancun"
+remappings = [
+    "@op/=vendor/op-fork/",
+    "forge-std/=lib/forge-std/src/",
+    # OP fork contracts import via package-root-absolute paths ("src/...").
+    # forge refuses to honor a "src/=" remapping (it collides with this
+    # project's own src/ source dir), so the vendored files' import prefix was
+    # rewritten "src/" -> "@op-src/" (imports only; logic/headers untouched).
+    "@op-src/=vendor/op-fork/src/",
+    "@openzeppelin/contracts-upgradeable/=vendor/op-fork/lib/openzeppelin-contracts-upgradeable/contracts/",
+    "@openzeppelin/contracts/=vendor/op-fork/lib/openzeppelin-contracts/contracts/",
+    "@solady/=vendor/op-fork/lib/solady/src/",
+    "@rari-capital/solmate/=vendor/op-fork/lib/solmate/",
+]
+
+[profile.ci]
+fuzz = { runs = 1000 }
+verbosity = 4
